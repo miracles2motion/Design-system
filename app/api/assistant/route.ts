@@ -1,8 +1,8 @@
 import { lookup } from "node:dns/promises";
-import { request as httpsRequest } from "node:https";
-import { isIP, type LookupFunction } from "node:net";
+import { isIP } from "node:net";
 import { NextResponse } from "next/server";
 import { parseThemeProposal } from "../../../lib/theme";
+import { customProviderRequest, isTimeoutError, ProviderError, providerError } from "../../../lib/provider-transport";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -20,6 +20,14 @@ class RequestError extends Error {
   constructor(message: string, readonly status = 400) {
     super(message);
     this.name = "RequestError";
+  }
+}
+
+async function providerFetch(input: RequestInfo | URL, init: RequestInit, provider: string): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (error) {
+    throw providerError(provider, error, init.signal ?? undefined);
   }
 }
 
@@ -142,70 +150,6 @@ async function customChatEndpoint(value: unknown): Promise<{ endpoint: string; a
   return { endpoint, addresses };
 }
 
-function postCustomProvider(
-  endpoint: string,
-  addresses: { address: string; family: number }[],
-  apiKey: string,
-  payload: Record<string, unknown>,
-): Promise<Response> {
-  const url = new URL(endpoint);
-  const requestBody = JSON.stringify(payload);
-  const pinnedLookup = ((hostname: string, options: unknown, callback: (...args: any[]) => void) => {
-    if (hostname.toLowerCase().replace(/\.$/, "") !== url.hostname.toLowerCase().replace(/\.$/, "")) {
-      callback(new Error("Unexpected hostname in custom provider connection."));
-      return;
-    }
-    const all = typeof options === "object" && options !== null && "all" in options && Boolean((options as { all?: boolean }).all);
-    callback(null, all ? addresses : addresses[0].address, all ? undefined : addresses[0].family);
-  }) as unknown as LookupFunction;
-
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const fail = (error: Error) => {
-      if (settled) return;
-      settled = true;
-      reject(error);
-    };
-    const upstream = httpsRequest(endpoint, {
-      method: "POST",
-      agent: false,
-      lookup: pinnedLookup,
-      servername: url.hostname,
-      timeout: 25_000,
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json",
-        authorization: `Bearer ${apiKey}`,
-        "content-length": Buffer.byteLength(requestBody),
-      },
-    }, (response) => {
-      const chunks: Buffer[] = [];
-      let size = 0;
-      response.on("data", (chunk: Buffer | string) => {
-        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        size += bytes.byteLength;
-        if (size > 1_000_000) {
-          upstream.destroy(new Error("The custom provider response exceeded the size limit."));
-          return;
-        }
-        chunks.push(bytes);
-      });
-      response.on("error", fail);
-      response.on("end", () => {
-        if (settled) return;
-        settled = true;
-        resolve(new Response(Buffer.concat(chunks), {
-          status: response.statusCode ?? 502,
-          headers: { "content-type": response.headers["content-type"] ?? "application/json" },
-        }));
-      });
-    });
-    upstream.on("timeout", () => upstream.destroy(new Error("The custom provider request timed out.")));
-    upstream.on("error", fail);
-    upstream.end(requestBody);
-  });
-}
-
 function extractOpenAiText(payload: unknown): string {
   if (!isObject(payload) || !Array.isArray(payload.choices)) return "";
   const choice = payload.choices[0];
@@ -227,13 +171,24 @@ function extractGeminiText(payload: unknown): string {
   return isObject(part) && typeof part.text === "string" ? part.text : "";
 }
 
-async function readUpstream(response: Response, provider: string) {
-  const body = await response.json().catch(() => null);
+async function readUpstream(response: Response, provider: string, signal?: AbortSignal) {
   if (!response.ok) {
     // Do not pass upstream request details, headers, or credentials back to the browser.
-    throw new Error(`${provider} returned an error (${response.status}). Check the provider, model, and key.`);
+    void response.body?.cancel().catch(() => undefined);
+    throw new ProviderError(`${provider} returned an error (${response.status}). Check the provider, model, and key.`);
   }
-  return body;
+
+  try {
+    return await response.json();
+  } catch (error) {
+    if (Boolean(signal?.aborted) || isTimeoutError(error)) {
+      throw new ProviderError(`${provider} request timed out. Try again.`, 504);
+    }
+    if (error instanceof SyntaxError) {
+      throw new ProviderError(`${provider} returned invalid JSON. Try again or check the provider response.`);
+    }
+    throw new ProviderError(`${provider} response could not be read. Try again.`, 502);
+  }
 }
 
 export async function POST(request: Request) {
@@ -265,10 +220,11 @@ export async function POST(request: Request) {
 
     let text = "";
     if (provider === "anthropic") {
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
+      const signal = AbortSignal.timeout(25_000);
+      const response = await providerFetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         cache: "no-store",
-        signal: AbortSignal.timeout(25_000),
+        signal,
         headers: {
           "content-type": "application/json",
           "x-api-key": apiKey,
@@ -280,35 +236,38 @@ export async function POST(request: Request) {
           system: systemPrompt,
           messages: [{ role: "user", content: prompt }],
         }),
-      });
-      text = extractAnthropicText(await readUpstream(response, "Anthropic"));
+      }, "Anthropic");
+      text = extractAnthropicText(await readUpstream(response, "Anthropic", signal));
     } else if (provider === "gemini") {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+      const signal = AbortSignal.timeout(25_000);
+      const response = await providerFetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
         method: "POST",
         cache: "no-store",
-        signal: AbortSignal.timeout(25_000),
+        signal,
         headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: systemPrompt }] },
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: { responseMimeType: "application/json", temperature: 0.35, maxOutputTokens: 900 },
         }),
-      });
-      text = extractGeminiText(await readUpstream(response, "Gemini"));
+      }, "Gemini");
+      text = extractGeminiText(await readUpstream(response, "Gemini", signal));
     } else if (provider === "custom") {
       const { endpoint, addresses } = await customChatEndpoint(body.baseUrl);
-      const response = await postCustomProvider(endpoint, addresses, apiKey, {
+      const signal = AbortSignal.timeout(25_000);
+      const response = await customProviderRequest(endpoint, addresses, apiKey, {
         model,
         temperature: 0.35,
         max_tokens: 900,
         messages: [{ role: "system", content: systemPrompt }, { role: "user", content: prompt }],
-      });
-      text = extractOpenAiText(await readUpstream(response, "Custom provider"));
+      }, signal);
+      text = extractOpenAiText(await readUpstream(response, "Custom provider", signal));
     } else if (openAiEndpoint) {
-      const response = await fetch(openAiEndpoint, {
+      const signal = AbortSignal.timeout(25_000);
+      const response = await providerFetch(openAiEndpoint, {
         method: "POST",
         cache: "no-store",
-        signal: AbortSignal.timeout(25_000),
+        signal,
         headers: {
           "content-type": "application/json",
           authorization: `Bearer ${apiKey}`,
@@ -321,21 +280,34 @@ export async function POST(request: Request) {
           response_format: { type: "json_object" },
           messages: [{ role: "system", content: systemPrompt }, { role: "user", content: prompt }],
         }),
-      });
-      text = extractOpenAiText(await readUpstream(response, provider));
+      }, provider);
+      text = extractOpenAiText(await readUpstream(response, provider, signal));
     } else {
       return NextResponse.json({ error: "Choose a supported provider in Settings." }, { status: 400, headers: NO_STORE_HEADERS });
     }
 
     const jsonStart = text.indexOf("{");
     const jsonEnd = text.lastIndexOf("}");
-    if (jsonStart < 0 || jsonEnd <= jsonStart) throw new Error("The model did not return JSON. Try again or choose another model.");
-    const rawPatch = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
-    const patch = parseThemeProposal(rawPatch);
+    if (jsonStart < 0 || jsonEnd <= jsonStart) throw new ProviderError("The model did not return JSON. Try again or choose another model.");
+    let rawPatch: unknown;
+    try {
+      rawPatch = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+    } catch {
+      throw new ProviderError("The model returned invalid JSON. Try again or choose another model.");
+    }
+    let patch: ReturnType<typeof parseThemeProposal>;
+    try {
+      patch = parseThemeProposal(rawPatch);
+    } catch (error) {
+      throw new ProviderError(error instanceof Error ? error.message : "The model returned an invalid proposal.");
+    }
     return NextResponse.json({ patch }, { headers: NO_STORE_HEADERS });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "The request could not be completed.";
-    const status = error instanceof RequestError ? error.status : 502;
+    const safeError = error instanceof RequestError || error instanceof ProviderError;
+    const message = safeError
+      ? error.message
+      : "The request could not be completed. Check provider settings and try again.";
+    const status = safeError ? error.status : 502;
     return NextResponse.json({ error: message }, { status, headers: NO_STORE_HEADERS });
   }
 }

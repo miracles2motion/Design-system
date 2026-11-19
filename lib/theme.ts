@@ -125,6 +125,8 @@ export interface ThemeDraft {
   /** Preserve imported format data so edits do not discard unknown contract fields. */
   sourceUi?: Record<string, unknown>;
   sourceFoundations?: Record<string, unknown>;
+  /** Original UI filename, used to lint a preserved imported pair. */
+  sourceUiFilename?: string;
 }
 
 export const STARTER_THEME: ThemeDraft = {
@@ -183,7 +185,8 @@ export function normalizeThemeDraft(value: unknown): ThemeDraft | null {
     (value.typography !== undefined && !isThemeTypography(value.typography)) ||
     (value.spacing !== undefined && !isThemeSpacing(value.spacing)) ||
     (value.sourceUi !== undefined && !isRecord(value.sourceUi)) ||
-    (value.sourceFoundations !== undefined && !isRecord(value.sourceFoundations))) {
+    (value.sourceFoundations !== undefined && !isRecord(value.sourceFoundations)) ||
+    (value.sourceUiFilename !== undefined && typeof value.sourceUiFilename !== "string")) {
     return null;
   }
 

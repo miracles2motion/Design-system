@@ -745,3 +745,44 @@ button:disabled { cursor: not-allowed; opacity: .52; }
 .sample-site--mobile .sample-metric { padding: calc(var(--p-card-padding, 16px) * .375); }
 .sample-site--mobile .sample-metric strong { font-size: calc(var(--p-heading-size, 28px) * .5); }
 .sample-site--mobile .sample-table__row { min-height: calc(var(--p-row-height, 68px) * .33); }
+
+/* Contract and contrast diagnostics for generated exports. */
+.validation-trigger { gap: 6px; }
+.validation-badge { min-width: 15px; height: 15px; display: inline-grid; place-items: center; padding: 0 4px; border-radius: 8px; background: var(--surface-hover); color: var(--text-2); font-size: 7px; font-weight: 700; line-height: 1; }
+.validation-badge--error { background: rgba(194, 67, 67, .12); color: var(--red); }
+.validation-badge--warning { background: rgba(183, 126, 41, .13); color: #9b6b20; }
+.validation-badge--ok { background: rgba(57, 144, 89, .12); color: var(--green); }
+.validation-dialog { width: min(620px, 96vw); max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: 0 25px 90px rgba(0,0,0,.26); }
+.validation-dialog__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; padding: 18px 20px 14px; border-bottom: 1px solid var(--border); }
+.validation-dialog__head > div { min-width: 0; }
+.validation-dialog__head h2 { margin: 5px 0 4px; font-family: var(--font-display); font-size: 17px; letter-spacing: -.35px; }
+.validation-dialog__head p { max-width: 470px; margin: 0; color: var(--text-2); font-size: 9px; line-height: 1.55; }
+.validation-summary { display: flex; align-items: center; gap: 8px; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.validation-summary__item { min-width: 67px; display: flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
+.validation-summary__item b { font-size: 12px; font-variant-numeric: tabular-nums; }
+.validation-summary__item span { color: var(--text-3); font-size: 8px; }
+.validation-summary__item--error b { color: var(--red); }
+.validation-summary__item--warning b { color: #a97528; }
+.validation-summary__item--ok b { color: var(--green); }
+.validation-summary > p { margin: 0 0 0 3px; color: var(--text-2); font-size: 8px; line-height: 1.45; }
+.validation-list { min-height: 0; flex: 1; overflow: auto; padding: 4px 20px 12px; }
+.validation-issue { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 9px; padding: 11px 0; border-bottom: 1px solid var(--border); }
+.validation-issue:last-child { border-bottom: 0; }
+.validation-issue__mark { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; font-size: 10px; font-weight: 700; }
+.validation-issue__mark--error { background: rgba(194, 67, 67, .12); color: var(--red); }
+.validation-issue__mark--warning { background: rgba(183, 126, 41, .13); color: #9b6b20; }
+.validation-issue__top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.validation-issue__top b { min-width: 0; color: var(--text); font-size: 9px; font-weight: 650; overflow-wrap: anywhere; }
+.validation-issue__top code { flex: none; color: var(--text-3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 7px; }
+.validation-issue p { margin: 4px 0 0; color: var(--text-2); font-size: 8px; line-height: 1.5; }
+.validation-empty { min-height: 150px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--green); text-align: center; }
+.validation-empty b { color: var(--text); font-size: 10px; }
+.validation-empty span { color: var(--text-3); font-size: 8px; }
+.validation-dialog__footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 20px; border-top: 1px solid var(--border); }
+.validation-dialog__footer > span { color: var(--text-3); font-size: 8px; line-height: 1.4; }
+@media (max-width: 560px) {
+  .validation-summary { align-items: flex-start; flex-wrap: wrap; }
+  .validation-summary > p { flex-basis: 100%; margin: 2px 0 0; }
+  .validation-dialog__head, .validation-dialog__footer { padding-right: 14px; padding-left: 14px; }
+  .validation-list { padding-right: 14px; padding-left: 14px; }
+}

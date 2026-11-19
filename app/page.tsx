@@ -44,6 +44,7 @@ import foundationsJson from "@/data/windows_11_pro_foundations.json";
 import uiJson from "@/data/windows_11_pro_ui.json";
 import { STARTER_DESIGNS, type StarterDesign } from "@/data/marketplace";
 import { clearLocal, readLocal, removeLocal, writeLocal } from "@/lib/storage";
+import { validateFoundationsDocument, validateOpenUiDocument, validateThemeDraft, validateThemeExports, type ThemeDiagnostic } from "@/lib/diagnostics";
 import { strToU8, zipSync } from "fflate";
 import {
   applyThemeProposal,
@@ -521,10 +522,54 @@ function StudioView({
   const [activeInspector, setActiveInspector] = useState<"colors" | "style" | "foundations" | "tokens">("colors");
   const [activeTokenGroup, setActiveTokenGroup] = useState("Colors");
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [validationOpen, setValidationOpen] = useState(false);
+  const validationDialogRef = useRef<HTMLElement | null>(null);
+  const validationReport = useMemo(() => validateThemeExports(theme), [theme]);
+  const validationErrors = validationReport.filter((issue) => issue.severity === "error");
+  const validationWarnings = validationReport.filter((issue) => issue.severity === "warning");
   const [viewport, setViewport] = useState<PreviewViewport>("desktop");
   const [showLargePreview, setShowLargePreview] = useState(false);
   const [pendingProposal, setPendingProposal] = useState<PendingProposal | null>(null);
   const [previewingProposal, setPreviewingProposal] = useState(false);
+
+  useEffect(() => {
+    if (!validationOpen) return;
+    const dialog = validationDialogRef.current;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusableSelector = "button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
+    const getFocusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>(focusableSelector) ?? [])
+      .filter((element) => !element.hasAttribute("hidden") && element.getAttribute("aria-hidden") !== "true");
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setValidationOpen(false);
+        return;
+      }
+      if (event.key !== "Tab" || !dialog) return;
+      const elements = getFocusable();
+      if (!elements.length) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    dialog?.focus();
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [validationOpen]);
 
   const applyPatch = (patch: ThemeProposalPatch) => {
     onThemeChange((draft) => ({ ...applyThemeProposal(draft, patch), updatedAt: Date.now() }));
@@ -622,7 +667,7 @@ function StudioView({
     <div className="page-stack studio-view">
       <div className="studio-heading">
         <div><div className="breadcrumb"><span>Workspace</span><ChevronRight size={13}/><span>Studio</span></div><div className="studio-title-row"><h1>{theme.name}</h1><span className="local-badge"><span/> Saved locally</span></div><p>Refine your tokens and see them applied to the sample website.</p></div>
-        <div className="studio-toolbar"><button className="button button--subtle button--small" type="button" onClick={onImport}><Upload size={14}/> Import</button><button className="button button--subtle button--small" type="button" onClick={onUndo} disabled={!canUndo}><ArrowDownToLine size={14}/> Undo</button><div className="export-actions"><button className="button button--primary button--small" type="button" onClick={onExportPair}><Download size={14}/> Export pair</button><button className="export-more" type="button" aria-label="More export formats" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen((open) => !open)}><ChevronDown size={14}/></button>{exportMenuOpen && <div className="export-menu" role="menu"><button type="button" role="menuitem" onClick={() => { onExport(); setExportMenuOpen(false); }}><FileText size={13}/> OpenUI 1.0 JSON</button><button type="button" role="menuitem" onClick={() => { onExportFoundations(); setExportMenuOpen(false); }}><Layers3 size={13}/> Foundations draft JSON</button><button type="button" role="menuitem" onClick={() => { onDownloadCss(); setExportMenuOpen(false); }}><Download size={13}/> CSS variables</button></div>}</div></div>
+        <div className="studio-toolbar"><button className="button button--subtle button--small" type="button" onClick={onImport}><Upload size={14}/> Import</button><button className="button button--subtle button--small" type="button" onClick={onUndo} disabled={!canUndo}><ArrowDownToLine size={14}/> Undo</button><button className="button button--subtle button--small validation-trigger" type="button" aria-label={`Validate theme: ${validationErrors.length} errors, ${validationWarnings.length} warnings`} onClick={() => setValidationOpen(true)}><ShieldCheck size={14}/> Validate<span className={`validation-badge ${validationErrors.length ? "validation-badge--error" : validationWarnings.length ? "validation-badge--warning" : "validation-badge--ok"}`}>{validationErrors.length || validationWarnings.length || "✓"}</span></button><div className="export-actions"><button className="button button--primary button--small" type="button" onClick={onExportPair}><Download size={14}/> Export pair</button><button className="export-more" type="button" aria-label="More export formats" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen((open) => !open)}><ChevronDown size={14}/></button>{exportMenuOpen && <div className="export-menu" role="menu"><button type="button" role="menuitem" onClick={() => { onExport(); setExportMenuOpen(false); }}><FileText size={13}/> OpenUI 1.0 JSON</button><button type="button" role="menuitem" onClick={() => { onExportFoundations(); setExportMenuOpen(false); }}><Layers3 size={13}/> Foundations draft JSON</button><button type="button" role="menuitem" onClick={() => { onDownloadCss(); setExportMenuOpen(false); }}><Download size={13}/> CSS variables</button></div>}</div></div>
       </div>
       <div className="studio-grid">
         <section className="assistant-panel panel">
@@ -696,7 +741,13 @@ function StudioView({
           <div className="inspector-bottom"><button type="button" className="text-button" onClick={onExport}><Download size={14}/> Export this theme</button><span>Changes save to this browser</span></div>
         </section>
       </div>
-      {showLargePreview && <div className="modal-backdrop" onClick={() => setShowLargePreview(false)}><section className="preview-modal" role="dialog" aria-modal="true" aria-label="Sample website preview" onClick={(event) => event.stopPropagation()}><div className="preview-modal__head"><div><span className="section-kicker">{proposalPreviewActive ? "PROPOSAL PREVIEW · NOT APPLIED" : `LIVE TOKEN PREVIEW · ${viewport.toUpperCase()}`}</span><h2>{displayedPreviewTheme.name}</h2><p>{proposalPreviewActive ? "This temporary preview leaves your draft unchanged." : "Changes in the editor are reflected here immediately."}</p></div><IconButton label="Close preview" onClick={() => setShowLargePreview(false)}><X size={17}/></IconButton></div><div className="preview-modal__toolbar"><span>{mode === "light" ? "Light mode" : "Dark mode"} <span>·</span> {viewport} viewport</span><div className="mode-toggle" role="group" aria-label="Preview mode"><button type="button" className={mode === "light" ? "is-active" : ""} onClick={() => onModeChange("light")} aria-label="Light preview"><Sun size={13}/></button><button type="button" className={mode === "dark" ? "is-active" : ""} onClick={() => onModeChange("dark")} aria-label="Dark preview"><Moon size={13}/></button></div></div><div className="preview-modal__stage"><SampleWebsite theme={displayedPreviewTheme} mode={mode} viewport={viewport}/></div><div className="preview-modal__footer"><span>Built-in SaaS dashboard template · {viewport === "desktop" ? "1440 px" : viewport === "tablet" ? "768 px" : "390 px"}</span><button type="button" className="button button--subtle" onClick={() => setShowLargePreview(false)}>Close preview</button></div></section></div>}
+      {showLargePreview && <div className="modal-backdrop" onClick={() => setShowLargePreview(false)}><section className="preview-modal" role="dialog" aria-modal="true" aria-label="Sample website preview" onClick={(event) => event.stopPropagation()}><div className="preview-modal__head"><div><span className="section-kicker">{proposalPreviewActive ? "PROPOSAL PREVIEW · NOT APPLIED" : `LIVE TOKEN PREVIEW · ${viewport.toUpperCase()}`}</span><h2>{displayedPreviewTheme.name}</h2><p>{proposalPreviewActive ? "This temporary preview leaves your draft unchanged." : "Changes in the editor are reflected here immediately."}</p></div><IconButton label="Close preview" onClick={() => setShowLargePreview(false)}><X size={17}/></IconButton></div><div className="preview-modal__toolbar"><span>{mode === "light" ? "Light mode" : "Dark mode"} <span>·</span> {viewport} viewport</span><div className="mode-toggle" role="group" aria-label="Preview mode"><button type="button" className={mode === "light" ? "is-active" : ""} onClick={() => onModeChange("light")} aria-label="Light preview"><Sun size={13}/></button><button type="button" className={mode === "dark" ? "is-active" : ""} onClick={() => onModeChange("dark")} aria-label="Dark preview"><Moon size={13}/></button></div></div><div className="preview-modal__stage"><SampleWebsite theme={displayedPreviewTheme} mode={mode} viewport={viewport}/></div><div className="preview-modal__footer"><span>Built-in dashboard template · {viewport === "desktop" ? "1440 px" : viewport === "tablet" ? "768 px" : "390 px"}</span><button type="button" className="button button--subtle" onClick={() => setShowLargePreview(false)}>Close preview</button></div></section></div>}
+      {validationOpen && <div className="modal-backdrop" onClick={() => setValidationOpen(false)}><section ref={validationDialogRef} tabIndex={-1} className="validation-dialog" role="dialog" aria-modal="true" aria-label="Theme validation report" onClick={(event) => event.stopPropagation()}>
+        <div className="validation-dialog__head"><div><span className="section-kicker">EXPORT PRE-CHECK</span><h2>Theme diagnostics</h2><p>Checks imported and generated OpenUI and foundations documents, pair filenames, supported ranges, and contrast.</p></div><IconButton label="Close validation report" onClick={() => setValidationOpen(false)}><X size={16}/></IconButton></div>
+        <div className="validation-summary"><div className={validationErrors.length ? "validation-summary__item validation-summary__item--error" : "validation-summary__item validation-summary__item--ok"}><b>{validationErrors.length}</b><span>Errors</span></div><div className={validationWarnings.length ? "validation-summary__item validation-summary__item--warning" : "validation-summary__item validation-summary__item--ok"}><b>{validationWarnings.length}</b><span>Warnings</span></div><p>{validationErrors.length ? "Address errors before sharing these generated contracts." : validationWarnings.length ? "No blocking errors. Review these advisory warnings; they do not prevent export." : "No validation issues found. The generated contracts are ready to export."}</p></div>
+        <div className="validation-list" aria-label="Validation findings">{validationReport.length ? validationReport.map((issue, index) => <article className={`validation-issue validation-issue--${issue.severity}`} key={`${issue.code}:${issue.path}:${index}`}><span className={`validation-issue__mark validation-issue__mark--${issue.severity}`}>{issue.severity === "error" ? "!" : "i"}</span><div><div className="validation-issue__top"><b>{issue.path}</b><code>{issue.code}</code></div><p>{issue.message}</p></div></article>) : <div className="validation-empty"><CheckCircle2 size={20}/><b>Everything looks good</b><span>No errors or warnings were found in the generated pair.</span></div>}</div>
+        <div className="validation-dialog__footer"><span>Unknown imported source fields remain preserved in the exported documents.</span><button type="button" className="button button--primary button--small" onClick={() => setValidationOpen(false)}>Done</button></div>
+      </section></div>}
     </div>
   );
 }
@@ -1042,15 +1093,27 @@ export default function HomePage() {
     };
   };
 
+  const checkExportDiagnostics = (issues: ThemeDiagnostic[]) => {
+    const errors = issues.filter((issue) => issue.severity === "error");
+    if (!errors.length) return true;
+    setView("studio");
+    notify(`Export blocked by ${errors.length} validation error${errors.length === 1 ? "" : "s"}. Open Validate in Studio for details.`);
+    return false;
+  };
+
   const exportJson = () => {
     const { uiFilename } = getExportNames();
-    downloadBlob(uiFilename, JSON.stringify(toOpenUiDocument(theme), null, 2), "application/json");
+    const document = toOpenUiDocument(theme);
+    if (!checkExportDiagnostics([...validateThemeDraft(theme), ...validateOpenUiDocument(document)])) return;
+    downloadBlob(uiFilename, JSON.stringify(document, null, 2), "application/json");
     notify("OpenUI 1.0 JSON downloaded");
   };
 
   const exportFoundations = () => {
     const { uiFilename, foundationsFilename } = getExportNames();
-    downloadBlob(foundationsFilename, JSON.stringify(toFoundationsDocument(theme, uiFilename), null, 2), "application/json");
+    const document = toFoundationsDocument(theme, uiFilename);
+    if (!checkExportDiagnostics([...validateThemeDraft(theme), ...validateFoundationsDocument(document)])) return;
+    downloadBlob(foundationsFilename, JSON.stringify(document, null, 2), "application/json");
     notify("Foundations draft JSON downloaded");
   };
 
@@ -1058,6 +1121,12 @@ export default function HomePage() {
     const { safeName, uiFilename, foundationsFilename } = getExportNames();
     const uiDocument = toOpenUiDocument(theme);
     const foundationsDocument = toFoundationsDocument(theme, uiFilename);
+    const issues = [
+      ...validateThemeDraft(theme),
+      ...validateOpenUiDocument(uiDocument),
+      ...validateFoundationsDocument(foundationsDocument),
+    ];
+    if (!checkExportDiagnostics(issues)) return;
     downloadZip(`${safeName}-openui-pair.zip`, {
       [uiFilename]: JSON.stringify(uiDocument, null, 2),
       [foundationsFilename]: JSON.stringify(foundationsDocument, null, 2),
@@ -1066,6 +1135,7 @@ export default function HomePage() {
   };
 
   const exportCss = () => {
+    if (!checkExportDiagnostics(validateThemeDraft(theme))) return;
     downloadBlob(`${getSafeName()}-tokens.css`, toCssFile(theme), "text/css");
     notify("CSS variables downloaded");
   };
@@ -1120,6 +1190,7 @@ export default function HomePage() {
         dark: { ...(uiValues?.dark ?? foundationsValues?.dark ?? STARTER_THEME.dark) },
         sourceUi: uiEntry?.document,
         sourceFoundations: foundationsEntry?.document,
+        sourceUiFilename: uiEntry?.file.name,
         updatedAt: Date.now(),
       };
 
@@ -1127,13 +1198,22 @@ export default function HomePage() {
       setPreviewMode("light");
       setView("studio");
       const pairMatches = uiEntry && foundationsEntry && typeof foundationsEntry.document.pairsWith === "string" && foundationsEntry.document.pairsWith !== uiEntry.file.name;
-      notify(pairMatches
+      const importMessage = pairMatches
         ? "Imported both formats. Their original pair filename differs; exports will write a matching pair."
         : uiEntry && foundationsEntry
           ? "Imported the OpenUI and foundations pair; source fields are preserved."
           : uiEntry
             ? "Imported openui-1.0; its original token data is preserved."
-            : "Imported foundations draft; palette, typography, radius, and spacing are mapped to the preview.");
+            : "Imported foundations draft; palette, typography, radius, and spacing are mapped to the preview.";
+      const diagnostics = validateThemeExports(next);
+      const errorCount = diagnostics.filter((issue) => issue.severity === "error").length;
+      const warningCount = diagnostics.filter((issue) => issue.severity === "warning").length;
+      const diagnosticsMessage = errorCount
+        ? ` Validation found ${errorCount} error${errorCount === 1 ? "" : "s"} and ${warningCount} warning${warningCount === 1 ? "" : "s"}; open Validate in Studio for details.`
+        : warningCount
+          ? ` Validation found ${warningCount} warning${warningCount === 1 ? "" : "s"}; open Validate in Studio for details.`
+          : "";
+      notify(`${importMessage}${diagnosticsMessage}`);
     } catch (error) {
       notify(error instanceof Error ? error.message : "Could not import this JSON file.");
     }
