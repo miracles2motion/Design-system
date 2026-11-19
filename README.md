@@ -15,7 +15,10 @@ The development server listens on `0.0.0.0:3000`. Open `http://localhost:3000` i
 npm test
 npm run typecheck
 npm run build
+npm run test:e2e
 ```
+
+`npm run test:e2e` starts or reuses the local Next.js server on port 3000 and runs the saved Playwright browser suite. It uses Chromium bundled as an npm dev dependency, so it does not download a browser at test time and does not need an AI provider key. To use an installed browser instead, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to its executable path. GitHub Actions runs the unit tests, type-check, production build, and browser suite on pushes and pull requests with Node 22.
 
 ## What is included
 
@@ -25,6 +28,7 @@ npm run build
 - Editable Brand Foundations v1 controls for font family, body and heading sizes, line height, page margin, section gap, card padding, control height, and row height. Foundation values are validated, included in token examples, and exported to both supported JSON contracts and CSS variables.
 - Local drafts and saved gallery favorites in IndexedDB, with multiple projects and a paired ZIP backup. Extract the two JSON files before importing that backup; the app’s import control accepts either contract or both files together.
 - Import for either `openui-1.0` or `openui-foundations-draft`, including importing both files together. Imported source objects are retained for round-tripping unknown fields. Exports include the OpenUI file, the foundations file, a matching `pairsWith` filename in the foundations contract, and CSS variables.
+- Studio **Validate** reports imported/generated contract errors, range issues, pairing issues, contrast guidance, and non-blocking advisories. Errors block JSON exports that include the invalid contract; advisory warnings do not.
 - BYOK assistant adapters for OpenAI, Anthropic/Claude, Gemini, OpenRouter, NVIDIA NIM, and custom OpenAI-compatible endpoints. Proposals may include validated typography and spacing fields as well as palette and shape changes; the Studio shows a diff and temporary preview for review before applying them. Undo is available in the Studio.
 
 ## Chat with Forma
@@ -56,6 +60,6 @@ The files remain distinct. The app maps supported theme values into the preview 
 
 ## Deployment
 
-This is a Next.js App Router app, pinned to Node 22, and is ready for Vercel's built-in Next.js support. After the current branch is pushed to the connected Git repository, create/import a Vercel project from it and keep the detected Next.js build settings. No database credentials or environment secrets are needed for the local-first experience; AI usage is optional and uses the key entered in Settings. The app sends standard security headers but intentionally does not set a frame-blocking header, so hosted previews can be embedded by the preview environment.
+This is a Next.js App Router app, pinned to Node 22, and supports Vercel's built-in Next.js settings. The merged release's PR #5 Vercel preview checks passed, but that does not establish the current production deployment or domain status; verify those in Vercel before treating production as confirmed. For a new deployment, import the repository into Vercel and keep the detected Next.js build settings. No database credentials or environment secrets are needed for the local-first experience; AI usage is optional and uses the key entered in Settings. The app sends standard security headers but intentionally does not set a frame-blocking header, so hosted previews can be embedded by the preview environment.
 
-Before shipping a public deployment, run `npm ci`, `npm test`, `npm run typecheck`, and `npm run build`. Provider calls should be tested with a key that the owner is willing to use; the project does not include a provider key or make AI calls during build.
+Before shipping a public deployment, run `npm ci`, `npm test`, `npm run typecheck`, `npm run build`, and `npm run test:e2e`. The browser suite does not make live provider calls. Provider calls should be tested separately with a key that the owner is willing to use; the project does not include a provider key or make AI calls during build.

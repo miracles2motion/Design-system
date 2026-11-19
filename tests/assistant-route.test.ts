@@ -71,6 +71,98 @@ test("assistant route rejects unsupported providers without making an upstream r
   assert.match((await responseError(response)).error, /supported provider/i);
 });
 
+test("assistant route redacts upstream error bodies and disables caching on failures", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    error: { message: `Invalid API key: ${apiKey}`, request_id: "provider-private-request-id" },
+  }), { status: 401, headers: { "content-type": "application/json" } });
+
+  try {
+    const response = await POST(makeRequest(JSON.stringify({
+      provider: "openai",
+      model: "example-model",
+      prompt: "Make the palette warmer",
+    })));
+    const data = await responseError(response);
+    assert.equal(response.status, 502);
+    assert.match(data.error, /openai returned an error \(401\)/i);
+    assert.doesNotMatch(data.error, /Invalid API key|test-only-key|provider-private-request-id/i);
+    assert.equal(response.headers.get("cache-control"), "no-store, max-age=0");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("assistant route normalizes upstream timeouts without reflecting raw errors", async () => {
+  const originalFetch = globalThis.fetch;
+  const timeoutError = new Error(`Timed out while sending ${apiKey}`);
+  timeoutError.name = "TimeoutError";
+  globalThis.fetch = async (_input, init) => {
+    assert.ok(init?.signal instanceof AbortSignal);
+    throw timeoutError;
+  };
+
+  try {
+    const response = await POST(makeRequest(JSON.stringify({
+      provider: "openai",
+      model: "example-model",
+      prompt: "Make the palette warmer",
+    })));
+    const data = await responseError(response);
+    assert.equal(response.status, 504);
+    assert.match(data.error, /openai request timed out/i);
+    assert.doesNotMatch(data.error, /test-only-key|Timed out while sending/i);
+    assert.equal(response.headers.get("cache-control"), "no-store, max-age=0");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("assistant route normalizes upstream transport errors", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new TypeError(`Connection failed for ${apiKey}`);
+  };
+
+  try {
+    const response = await POST(makeRequest(JSON.stringify({
+      provider: "openai",
+      model: "example-model",
+      prompt: "Make the palette warmer",
+    })));
+    const data = await responseError(response);
+    assert.equal(response.status, 502);
+    assert.match(data.error, /openai could not be reached/i);
+    assert.doesNotMatch(data.error, /test-only-key|Connection failed/i);
+    assert.equal(response.headers.get("cache-control"), "no-store, max-age=0");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("assistant route normalizes malformed upstream JSON without exposing raw content", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response("not-json-content", {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+
+  try {
+    const response = await POST(makeRequest(JSON.stringify({
+      provider: "openai",
+      model: "example-model",
+      prompt: "Make the palette warmer",
+    })));
+    const data = await responseError(response);
+    assert.equal(response.status, 502);
+    assert.match(data.error, /invalid json/i);
+    assert.doesNotMatch(data.error, /not-json-content/i);
+    assert.equal(response.headers.get("cache-control"), "no-store, max-age=0");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("assistant route returns validated typography and spacing proposals", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(JSON.stringify({
