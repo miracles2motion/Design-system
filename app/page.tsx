@@ -80,7 +80,7 @@ const INITIAL_MESSAGES: ChatMessage[] = [
   {
     id: "welcome",
     role: "assistant",
-    text: "Tell me what you’re designing and the mood you want. I can suggest a complete light and dark palette, or you can make changes directly in the controls.",
+    text: "Tell me what you’re designing and the mood you want—for example, “a calm palette for a wellness app.” I’ll propose token changes for review; nothing changes until you apply them.",
   },
 ];
 
@@ -331,6 +331,7 @@ function OverviewView({
   mode,
   onCreate,
   onOpenStudio,
+  onOpenAssistant,
   onOpenProject,
   onOpenMarketplace,
   onImport,
@@ -342,6 +343,7 @@ function OverviewView({
   mode: ThemeMode;
   onCreate: () => void;
   onOpenStudio: () => void;
+  onOpenAssistant: () => void;
   onOpenProject: (project: ThemeDraft) => void;
   onOpenMarketplace: () => void;
   onImport: () => void;
@@ -356,7 +358,7 @@ function OverviewView({
           <div className="eyebrow-label"><span className="eyebrow-line" /> YOUR DESIGN SYSTEM WORKSPACE</div>
           <h1>Good design starts<br/>with <em>good foundations.</em></h1>
           <p>Shape a visual language, preview it on a real sample website, and take the tokens wherever you build.</p>
-          <div className="hero-actions"><button className="button button--primary" type="button" onClick={onCreate}><Plus size={16}/> Create a design system <ArrowRight size={15}/></button><button className="button button--subtle" type="button" onClick={onImport}><Upload size={15}/> Import JSON</button></div>
+          <div className="hero-actions"><button className="button button--primary" type="button" onClick={onOpenAssistant}><Sparkles size={16}/> Chat with Forma <ArrowRight size={15}/></button><button className="button button--subtle" type="button" onClick={onCreate}><Plus size={15}/> Start from scratch</button><button className="button button--subtle" type="button" onClick={onImport}><Upload size={15}/> Import JSON</button></div>
           <div className="hero-note"><ShieldCheck size={14}/> No account required <span/> Your work stays in this browser</div>
         </div>
         <div className="welcome-hero__visual">
@@ -532,14 +534,14 @@ function StudioView({
       <div className="studio-grid">
         <section className="assistant-panel panel">
           <div className="panel-header"><div className="panel-title"><span className="panel-icon panel-icon--purple"><Sparkles size={16}/></span><div><h2>Design assistant</h2><small>Describe the feeling, I’ll shape the tokens</small></div></div><button className="more-button" type="button" aria-label="More assistant options"><MoreHorizontal size={17}/></button></div>
-          <div className="assistant-context"><span className="assistant-context__avatar"><Sparkles size={14}/></span><div><b>Working on {theme.name}</b><small>{apiKey ? `Connected to ${PROVIDERS.find((item) => item.id === provider)?.name ?? provider}` : "Connect a provider to generate"}</small></div><button type="button" onClick={onGoSettings} aria-label="Provider settings"><Settings size={14}/></button></div>
+          <div className="assistant-context"><span className="assistant-context__avatar"><Sparkles size={14}/></span><div><b>Working on {theme.name}</b><small>{apiKey ? `Key ready · ${PROVIDERS.find((item) => item.id === provider)?.name ?? provider}` : "Add a provider key in Settings"}</small></div><button type="button" onClick={onGoSettings} aria-label="Provider settings"><Settings size={14}/></button></div>
           <div className="chat-thread">
             {messages.map((message) => <div className={`chat-message chat-message--${message.role}`} key={message.id}>{message.role === "assistant" && <span className="chat-avatar"><Sparkles size={13}/></span>}<div className="chat-message__bubble">{message.text}</div></div>)}
             {isGenerating && <div className="chat-message chat-message--assistant"><span className="chat-avatar"><Sparkles size={13}/></span><div className="chat-message__bubble typing"><i/><i/><i/> Building a token proposal…</div></div>}
           </div>
           {pendingProposal && <div className="proposal-card"><div className="proposal-card__head"><span className="proposal-card__icon"><Sparkles size={13}/></span><div><b>Review token proposal</b><small>{proposalRows.length} proposed change{proposalRows.length === 1 ? "" : "s"} · draft unchanged</small></div></div><p>{pendingProposal.summary}</p><div className="proposal-diff">{proposalRows.slice(0, 6).map((row) => <div className="proposal-diff__row" key={row.label}><span>{row.label}</span><div><span className="proposal-value">{isHex(String(row.previous)) && <i style={{ background: String(row.previous) }}/>}<code>{String(row.previous)}</code></span><ArrowRight size={11}/><span className="proposal-value proposal-value--next">{isHex(String(row.next)) && <i style={{ background: String(row.next) }}/>}<code>{String(row.next)}</code></span></div></div>)}{proposalRows.length > 6 && <small className="proposal-diff__more">+ {proposalRows.length - 6} more changes</small>}</div><div className="proposal-actions"><button type="button" className="button button--subtle button--small" onClick={() => { setPendingProposal(null); onToast("Proposal discarded; your draft is unchanged"); }}>Discard</button><button type="button" className="button button--primary button--small" onClick={() => { applyPatch(pendingProposal.patch); setPendingProposal(null); onToast("Approved proposal applied to your local draft"); }}><Check size={13}/> Apply changes</button></div></div>}
           <div className="suggestion-block"><span className="suggestion-label">QUICK START</span><button type="button" className="suggestion-chip" onClick={() => { setPrompt("Create a warmer, more welcoming palette while keeping the text easy to read."); }}>Warm it up <ArrowUpRight size={12}/></button><button type="button" className="suggestion-chip" onClick={() => { setPrompt("Make the interface more compact for a data-heavy desktop dashboard."); }}>More compact <ArrowUpRight size={12}/></button><button type="button" className="suggestion-chip" onClick={() => { setPrompt("Give this system a confident, premium dark mode with a softer accent."); }}>Refine dark mode <ArrowUpRight size={12}/></button></div>
-          <form className="chat-composer" onSubmit={(event) => sendPrompt(event)}><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Describe your product or ask for a change…" rows={3} aria-label="Describe a design change"/><div className="chat-composer__footer"><span><span className={apiKey ? "connection-dot connection-dot--on" : "connection-dot"}/>{apiKey ? "Your provider key is in memory" : "No AI key connected"}</span><button type="submit" className="send-button" disabled={!prompt.trim() || isGenerating} aria-label="Send prompt"><Send size={15}/></button></div></form>
+          <form className="chat-composer" onSubmit={(event) => sendPrompt(event)}><textarea id="assistant-prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={apiKey ? "Describe a change for your design system…" : "Add a provider key in Settings to chat…"} rows={3} aria-label="Describe a design change"/><div className="chat-composer__footer"><span><span className={apiKey ? "connection-dot connection-dot--on" : "connection-dot"}/>{apiKey ? "Provider key ready for this session" : "No AI key connected"}</span><button type="submit" className="send-button" disabled={!prompt.trim() || isGenerating} aria-label="Send prompt"><span>Send</span><Send size={14}/></button></div></form>
           <p className="assistant-footnote"><ShieldCheck size={12}/> Your API key is used for this request only and isn’t saved by Forma.</p>
         </section>
 
@@ -612,6 +614,7 @@ function SettingsView({
   onClear,
   onExportPair,
   onToast,
+  onStartChat,
   theme,
 }: {
   provider: Provider;
@@ -625,6 +628,7 @@ function SettingsView({
   onClear: () => void;
   onExportPair: () => void;
   onToast: (message: string) => void;
+  onStartChat: () => void;
   theme: ThemeDraft;
 }) {
   const [visibleKey, setVisibleKey] = useState(false);
@@ -676,7 +680,7 @@ function SettingsView({
           <section className="settings-card"><div className="settings-card__head"><div><div className="settings-card__icon settings-card__icon--purple"><Sparkles size={17}/></div><div><h2>AI provider</h2><p>Bring your own key. Forma forwards it only for the request you make.</p></div></div><span className={`settings-status ${testStatus === "connected" ? "settings-status--ok" : testStatus === "error" ? "settings-status--error" : ""}`}><i/>{testStatus === "connected" ? "Connected" : testStatus === "error" ? "Check connection" : apiKey ? "Key ready" : "Not connected"}</span></div>
             <div className="provider-grid">{PROVIDERS.map((option) => <button type="button" key={option.id} className={`provider-option ${provider === option.id ? "is-selected" : ""}`} onClick={() => { onProviderChange(option.id); onModelChange(option.sampleModel); setTestStatus("idle"); }}><span className={`provider-logo provider-logo--${option.id}`}>{option.icon}</span><span><b>{option.name}</b><small>{option.detail}</small></span>{provider === option.id && <CheckCircle2 size={16} className="provider-check"/>}</button>)}</div>
             <div className={`settings-form-grid ${provider === "custom" ? "settings-form-grid--custom" : ""}`}>{provider === "custom" && <label className="settings-field"><span>OpenAI-compatible API base URL</span><input value={baseUrl ?? ""} onChange={(event) => { onBaseUrlChange(event.target.value); setTestStatus("idle"); }} placeholder="https://api.example.com/v1" autoComplete="url" spellCheck={false}/><small>HTTPS endpoint only. Private network and local addresses are blocked by the proxy.</small></label>}<label className="settings-field"><span>Model ID</span><input value={model} onChange={(event) => { onModelChange(event.target.value); setTestStatus("idle"); }} placeholder={selectedProvider.sampleModel || "your-model-id"}/><small>Use a model ID enabled for your provider account.</small></label><label className="settings-field"><span>API key</span><div className="secret-input"><input type={visibleKey ? "text" : "password"} value={apiKey} onChange={(event) => { onApiKeyChange(event.target.value); setTestStatus("idle"); }} placeholder={`Paste your ${selectedProvider.name} key`} autoComplete="off" spellCheck={false}/><button type="button" onClick={() => setVisibleKey((value) => !value)} aria-label={visibleKey ? "Hide API key" : "Show API key"}>{visibleKey ? <EyeOff size={15}/> : <Eye size={15}/>}</button></div><small>Used in memory only. It is not saved when you close or refresh this tab.</small></label></div>
-            <div className="settings-card__actions"><button type="button" className="button button--primary" onClick={testConnection} disabled={!apiKey.trim() || testing || !model.trim() || (provider === "custom" && !baseUrl?.trim())}>{testing ? <span className="button-spinner"/> : testStatus === "connected" ? <Check size={15}/> : <Zap size={15}/>} {testing ? "Testing provider…" : testStatus === "connected" ? "Connection verified" : "Test connection"}</button><span><ShieldCheck size={13}/> Sends one short test request to the selected provider.</span></div>
+            <div className="settings-card__actions settings-card__actions--provider"><div className="settings-provider-actions"><button type="button" className="button button--primary" onClick={onStartChat} disabled={!apiKey.trim() || !model.trim() || (provider === "custom" && !baseUrl?.trim())}><MessageCircle size={15}/> Chat with Forma <ArrowRight size={14}/></button><button type="button" className="button button--subtle" onClick={testConnection} disabled={!apiKey.trim() || testing || !model.trim() || (provider === "custom" && !baseUrl?.trim())}>{testing ? <span className="button-spinner"/> : testStatus === "connected" ? <Check size={15}/> : <Zap size={15}/>} {testing ? "Testing provider…" : testStatus === "connected" ? "Connection verified" : "Test connection"}</button></div><span><ShieldCheck size={13}/> Testing is optional. Your key is used when you send a prompt.</span></div>
             <div className="privacy-callout"><span><ShieldCheck size={16}/></span><div><b>Your key stays yours.</b><p>Forma doesn’t store your API key. When you ask the assistant to generate, your brief and current theme are sent to the provider you selected. Don’t include sensitive project information.</p></div></div>
           </section>
           <section className="settings-card" id="local-data"><div className="settings-card__head"><div><div className="settings-card__icon settings-card__icon--blue"><HardDriveIcon/></div><div><h2>Local data</h2><p>Projects and saved designs are stored in this browser, not in an account.</p></div></div><span className="local-only-pill"><span/> On this device</span></div><div className="storage-row"><div className="storage-row__glyph"><FileText size={18}/></div><div><b>Design system drafts</b><small>Saved automatically in browser storage</small></div><span className="storage-row__value">Private to this browser</span></div><div className="storage-row"><div className="storage-row__glyph storage-row__glyph--yellow"><Bookmark size={18}/></div><div><b>Saved starter designs</b><small>Favorites are stored locally</small></div><span className="storage-row__value">No login needed</span></div><div className="settings-warning"><CircleHelp size={15}/><span>Browser storage can be cleared by your device. Download a paired ZIP backup; extract its two JSON files before importing them again.</span></div><div className="settings-card__actions settings-card__actions--between"><button type="button" className="button button--subtle" onClick={onExportPair}><Download size={14}/> Download paired backup ZIP</button>{confirmClear ? <div className="confirm-inline"><span>Clear local drafts and favorites?</span><button type="button" onClick={onClear}>Yes, clear</button><button type="button" onClick={() => setConfirmClear(false)}>Cancel</button></div> : <button type="button" className="button button--danger-ghost" onClick={() => setConfirmClear(true)}>Clear local data</button>}</div></section>
@@ -1020,7 +1024,7 @@ export default function HomePage() {
 
   const navItems: { id: View; label: string; icon: React.ReactNode; section: "main" | "manage" }[] = [
     { id: "overview", label: "Overview", icon: <Home size={17}/>, section: "main" },
-    { id: "studio", label: "Studio", icon: <Sparkles size={17}/>, section: "main" },
+    { id: "studio", label: "AI Studio", icon: <Sparkles size={17}/>, section: "main" },
     { id: "marketplace", label: "Marketplace", icon: <Layers3 size={17}/>, section: "main" },
     { id: "settings", label: "Settings", icon: <Settings size={17}/>, section: "manage" },
   ];
@@ -1031,6 +1035,17 @@ export default function HomePage() {
     setMobileMenu(false);
   };
 
+  const openAssistant = () => {
+    setView("studio");
+    setMobileMenu(false);
+    window.setTimeout(() => {
+      const composer = document.querySelector<HTMLTextAreaElement>("#assistant-prompt");
+      if (!composer) return;
+      composer.scrollIntoView({ behavior: "smooth", block: "center" });
+      composer.focus({ preventScroll: true });
+    }, 80);
+  };
+
   const openProject = (project: ThemeDraft) => {
     setTheme(project);
     setHistory([]);
@@ -1038,10 +1053,10 @@ export default function HomePage() {
     setMobileMenu(false);
   };
 
-  const main = view === "overview" ? <OverviewView theme={theme} projects={projects} mode={previewMode} onCreate={createNewSystem} onOpenStudio={() => onNav("studio")} onOpenProject={openProject} onOpenMarketplace={() => onNav("marketplace")} onImport={openImport} onApply={applyStarter} onPreviewItem={setPreviewItem}/> :
+  const main = view === "overview" ? <OverviewView theme={theme} projects={projects} mode={previewMode} onCreate={createNewSystem} onOpenStudio={() => onNav("studio")} onOpenAssistant={openAssistant} onOpenProject={openProject} onOpenMarketplace={() => onNav("marketplace")} onImport={openImport} onApply={applyStarter} onPreviewItem={setPreviewItem}/> :
     view === "studio" ? <StudioView theme={theme} mode={previewMode} onModeChange={setPreviewMode} onThemeChange={updateTheme} onUndo={undo} canUndo={history.length > 0} onExport={exportJson} onExportFoundations={exportFoundations} onExportPair={exportPair} onDownloadCss={exportCss} onImport={openImport} provider={providerConfig.provider} model={providerConfig.model} baseUrl={providerConfig.baseUrl} apiKey={apiKey} onGoSettings={() => onNav("settings")} onToast={notify}/> :
       view === "marketplace" ? <MarketplaceView mode={previewMode} favorites={favorites} onToggleFavorite={toggleFavorite} onApply={applyStarter} onPreview={setPreviewItem}/> :
-        <SettingsView provider={providerConfig.provider} model={providerConfig.model} baseUrl={providerConfig.baseUrl} apiKey={apiKey} onProviderChange={(provider) => { setProviderConfig((config) => ({ ...config, provider })); setApiKey(""); }} onModelChange={(model) => { setProviderConfig((config) => ({ ...config, model })); }} onBaseUrlChange={(baseUrl) => { setProviderConfig((config) => ({ ...config, baseUrl })); }} onApiKeyChange={(key) => { setApiKey(key); }} onClear={async () => { await clearLocal().catch(() => undefined); setTheme({ ...STARTER_THEME, id: createId() }); setProjects([]); setFavorites([]); setHistory([]); setApiKey(""); setProviderConfig({ provider: "openai", model: "gpt-4o-mini", baseUrl: "" }); notify("Local project data cleared"); }} onExportPair={exportPair} onToast={notify} theme={theme}/>;
+        <SettingsView provider={providerConfig.provider} model={providerConfig.model} baseUrl={providerConfig.baseUrl} apiKey={apiKey} onProviderChange={(provider) => { setProviderConfig((config) => ({ ...config, provider })); setApiKey(""); }} onModelChange={(model) => { setProviderConfig((config) => ({ ...config, model })); }} onBaseUrlChange={(baseUrl) => { setProviderConfig((config) => ({ ...config, baseUrl })); }} onApiKeyChange={(key) => { setApiKey(key); }} onClear={async () => { await clearLocal().catch(() => undefined); setTheme({ ...STARTER_THEME, id: createId() }); setProjects([]); setFavorites([]); setHistory([]); setApiKey(""); setProviderConfig({ provider: "openai", model: "gpt-4o-mini", baseUrl: "" }); notify("Local project data cleared"); }} onExportPair={exportPair} onToast={notify} onStartChat={openAssistant} theme={theme}/>;
 
   return (
     <div className={`app-shell ${appMode === "dark" ? "app-shell--dark" : ""}`}>

@@ -19,12 +19,16 @@ npm run build
 
 ## What is included
 
-- Overview, Studio, Discovery, and Settings views; no account or login is required.
+- Overview, AI Studio, Discovery, and Settings views; no account or login is required.
 - A Windows/Fluent-inspired light and dark starter theme, plus five bundled gallery designs. The gallery is discovery-only; it has no checkout or public publishing backend.
 - A live sample SaaS dashboard preview with light/dark modes and desktop, tablet, and mobile layouts. Palette, radius, and density edits apply immediately to the preview.
 - Local drafts and saved gallery favorites in IndexedDB, with multiple projects and a paired ZIP backup. Extract the two JSON files before importing that backup; the app’s import control accepts either contract or both files together.
 - Import for either `openui-1.0` or `openui-foundations-draft`, including importing both files together. Imported source objects are retained for round-tripping unknown fields. Exports include the OpenUI file, the foundations file, a matching `pairsWith` filename in the foundations contract, and CSS variables.
 - BYOK assistant adapters for OpenAI, Anthropic/Claude, Gemini, OpenRouter, NVIDIA NIM, and custom OpenAI-compatible endpoints. Proposals are validated server-side and shown for review before they are applied. Undo is available in the Studio.
+
+## Chat with Forma
+
+From Overview, choose **Chat with Forma**, or add a provider key in **Settings** and choose **Chat with Forma** there. This opens AI Studio and focuses the prompt box. Ask for a design change (for example, “make a calm palette for a wellness app”), then press **Send**. Forma shows a reviewable proposal; it does not change your draft until you choose **Apply changes**. Provider testing in Settings is optional.
 
 ## AI provider privacy
 
