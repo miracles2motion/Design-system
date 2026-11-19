@@ -1,0 +1,207 @@
+{
+  "title": "Windows 11 Pro foundations",
+  "specVersion": "openui-foundations-draft",
+  "pairsWith": "windows_11_pro_ui_final.json",
+  "provenance": {
+    "official": "WinUI 3 / Fluent 2 theme resources and Windows shell accent palette (default blue)",
+    "derived": "Computed from official values (alpha composites, tints)",
+    "approx": "Design judgement; Microsoft publishes no number"
+  },
+  "device": {
+    "model": "Windows 11 desktop",
+    "effective_pixels": "epx (1 epx = 1 dp)",
+    "nav_pane": {
+      "compact_dp": 48,
+      "open_dp": 320
+    },
+    "breakpoints_dp": {
+      "compact": 640,
+      "expanded": 1008
+    }
+  },
+  "typography": {
+    "family": "Segoe UI Variable (Small / Text / Display optical sizes)",
+    "styles": [
+      {
+        "name": "caption",
+        "size": 12,
+        "line": 16,
+        "weight": "regular"
+      },
+      {
+        "name": "body",
+        "size": 14,
+        "line": 20,
+        "weight": "regular"
+      },
+      {
+        "name": "bodyStrong",
+        "size": 14,
+        "line": 20,
+        "weight": "semibold"
+      },
+      {
+        "name": "bodyLarge",
+        "size": 18,
+        "line": 24,
+        "weight": "regular"
+      },
+      {
+        "name": "subtitle",
+        "size": 20,
+        "line": 28,
+        "weight": "semibold"
+      },
+      {
+        "name": "title",
+        "size": 28,
+        "line": 36,
+        "weight": "semibold"
+      },
+      {
+        "name": "titleLarge",
+        "size": 40,
+        "line": 52,
+        "weight": "semibold"
+      },
+      {
+        "name": "display",
+        "size": 68,
+        "line": 92,
+        "weight": "semibold"
+      }
+    ]
+  },
+  "spacing_dp": {
+    "grid": 4,
+    "scale": [
+      4,
+      8,
+      12,
+      16,
+      24,
+      32,
+      40,
+      48
+    ],
+    "page_margin": 24,
+    "min_touch_target": 40
+  },
+  "radii_dp": {
+    "control": 4,
+    "overlay": 8,
+    "note": "ControlCornerRadius 4, OverlayCornerRadius 8"
+  },
+  "elevation_fluent2": {
+    "provenance": "official",
+    "light": {
+      "shadow2": "0 0 2 rgba(0,0,0,.12), 0 1 2 rgba(0,0,0,.14)",
+      "shadow4": "0 0 2 rgba(0,0,0,.12), 0 2 4 rgba(0,0,0,.14)",
+      "shadow8": "0 0 2 rgba(0,0,0,.12), 0 4 8 rgba(0,0,0,.14)",
+      "shadow16": "0 0 2 rgba(0,0,0,.12), 0 8 16 rgba(0,0,0,.14)",
+      "shadow28": "0 0 8 rgba(0,0,0,.12), 0 14 28 rgba(0,0,0,.14)",
+      "shadow64": "0 0 8 rgba(0,0,0,.12), 0 32 64 rgba(0,0,0,.14)"
+    },
+    "dark": {
+      "shadow2": "0 0 2 rgba(0,0,0,.24), 0 1 2 rgba(0,0,0,.28)",
+      "shadow4": "0 0 2 rgba(0,0,0,.24), 0 2 4 rgba(0,0,0,.28)",
+      "shadow8": "0 0 2 rgba(0,0,0,.24), 0 4 8 rgba(0,0,0,.28)",
+      "shadow16": "0 0 2 rgba(0,0,0,.24), 0 8 16 rgba(0,0,0,.28)",
+      "shadow28": "0 0 8 rgba(0,0,0,.24), 0 14 28 rgba(0,0,0,.28)",
+      "shadow64": "0 0 8 rgba(0,0,0,.24), 0 32 64 rgba(0,0,0,.28)"
+    }
+  },
+  "materials": {
+    "mica": {
+      "light": "#F3F3F3",
+      "dark": "#202020",
+      "use": "window backdrop, title bar, nav pane"
+    },
+    "acrylic": {
+      "light": "#F6F6F6",
+      "dark": "#2C2C2C",
+      "use": "flyouts, menus, tooltips (transient)"
+    }
+  },
+  "motion": {
+    "provenance": "official",
+    "faster_ms": 83,
+    "fast_ms": 167,
+    "normal_ms": 250,
+    "ease_out": "cubic-bezier(0, 0, 0, 1)",
+    "ease_in": "cubic-bezier(1, 1, 0, 1)"
+  },
+  "accent_palette_default_blue": {
+    "provenance": "official shell values",
+    "light3": "#99EBFF",
+    "light2": "#4CC2FF",
+    "light1": "#0091F8",
+    "base": "#0078D4",
+    "dark1": "#0067C0",
+    "dark2": "#003E92",
+    "dark3": "#001A68",
+    "usage": "light theme fill = dark1, dark theme fill = light2, accent text = dark2 / light3"
+  },
+  "states": {
+    "light": {
+      "accent_hover": "#1A76C6",
+      "accent_pressed": "#3385CD",
+      "accent_disabled": "#C8C8C8",
+      "text_disabled": "#A3A3A3",
+      "focus_outer": "#1B1B1B",
+      "focus_inner": "#FFFFFF"
+    },
+    "dark": {
+      "accent_hover": "#49B3EA",
+      "accent_pressed": "#45A4D5",
+      "accent_disabled": "#4C4C4C",
+      "text_disabled": "#5D5D5D",
+      "focus_outer": "#FFFFFF",
+      "focus_inner": "#000000"
+    },
+    "note": "hover = accent at 90% opacity, pressed = 80% (derived)"
+  },
+  "overlay": {
+    "scrim_light": "rgba(0,0,0,0.30)",
+    "scrim_dark": "rgba(0,0,0,0.60)",
+    "provenance": "approx"
+  },
+  "icons": {
+    "family": "Segoe Fluent Icons",
+    "sizes_dp": [
+      12,
+      16,
+      20,
+      24,
+      32
+    ]
+  },
+  "chart_palette": {
+    "provenance": "Fluent sample accents",
+    "light": [
+      "#0078D4",
+      "#00B7C3",
+      "#8764B8",
+      "#CA5010",
+      "#107C10",
+      "#C239B3",
+      "#5F6CAF",
+      "#B48C3C"
+    ],
+    "dark": [
+      "#4CC2FF",
+      "#00B7C3",
+      "#B4A0FF",
+      "#F7630C",
+      "#6CCB5F",
+      "#E66AD7",
+      "#8E9AE0",
+      "#FCE100"
+    ]
+  },
+  "notes": [
+    "Windows has no native FAB; the fab tokens are an accent command button with a Fluent shadow.",
+    "Text boxes use a faint outline plus a stronger bottom edge (bottom_stroke_*), and a 2 dp accent bottom edge on focus.",
+    "Secondary purple is a Fluent palette color, not a Windows system color; swap freely."
+  ]
+}
