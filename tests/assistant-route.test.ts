@@ -70,3 +70,33 @@ test("assistant route rejects unsupported providers without making an upstream r
   assert.equal(response.status, 400);
   assert.match((await responseError(response)).error, /supported provider/i);
 });
+
+test("assistant route returns validated typography and spacing proposals", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    choices: [{
+      message: {
+        content: JSON.stringify({
+          summary: "A calmer, more editorial foundation.",
+          typography: { family: "serif", bodySize: 16, headingSize: 32, lineHeight: 1.6 },
+          spacing: { pageMargin: 32, sectionGap: 20, cardPadding: 24, controlHeight: 42, rowHeight: 80 },
+        }),
+      },
+    }],
+  }), { status: 200, headers: { "content-type": "application/json" } });
+
+  try {
+    const response = await POST(makeRequest(JSON.stringify({
+      provider: "openai",
+      model: "example-model",
+      prompt: "Use serif typography and more generous spacing.",
+      current: { typography: { family: "humanist", bodySize: 14 }, spacing: { pageMargin: 24 } },
+    })));
+    assert.equal(response.status, 200);
+    const data = await response.json() as { patch: Record<string, unknown> };
+    assert.deepEqual(data.patch.typography, { family: "serif", bodySize: 16, headingSize: 32, lineHeight: 1.6 });
+    assert.deepEqual(data.patch.spacing, { pageMargin: 32, sectionGap: 20, cardPadding: 24, controlHeight: 42, rowHeight: 80 });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

@@ -1,4 +1,4 @@
-import type { ThemeDraft } from "@/lib/theme";
+import { DEFAULT_TYPOGRAPHY, spacingForDensity, type ThemeDraft } from "@/lib/theme";
 
 export interface StarterDesign {
   id: string;
@@ -12,49 +12,54 @@ export interface StarterDesign {
   theme: ThemeDraft;
 }
 
-const base = (overrides: Partial<ThemeDraft>): ThemeDraft => ({
-  id: "starter",
-  name: "Starter design",
-  description: "A ready-to-remix starting point.",
-  author: "Forma starter library",
-  tags: ["Starter"],
-  light: {
-    background: "#F4F5F7",
-    surface: "#FFFFFF",
-    elevated: "#FFFFFF",
-    highlight: "#EDF1F5",
-    accent: "#3D6FB6",
-    accentPressed: "#315C98",
-    accentSubtle: "#E7EFFA",
-    secondary: "#7B6CB2",
-    text: "#20242A",
-    muted: "#626B76",
-    faint: "#8A929B",
-    border: "#DDE2E8",
-    interactiveBorder: "#8A929B",
-    onAccent: "#FFFFFF",
-  },
-  dark: {
-    background: "#191D23",
-    surface: "#222832",
-    elevated: "#29313C",
-    highlight: "#303A47",
-    accent: "#83B5FF",
-    accentPressed: "#A3C7FF",
-    accentSubtle: "#26374D",
-    secondary: "#C2B3FF",
-    text: "#F2F4F8",
-    muted: "#C1C8D2",
-    faint: "#919BA8",
-    border: "#39424F",
-    interactiveBorder: "#8693A2",
-    onAccent: "#11233B",
-  },
-  radius: 10,
-  density: "comfortable",
-  updatedAt: Date.now(),
-  ...overrides,
-});
+const base = (overrides: Partial<ThemeDraft>): ThemeDraft => {
+  const density = overrides.density ?? "comfortable";
+  return {
+    id: "starter",
+    name: "Starter design",
+    description: "A ready-to-remix starting point.",
+    author: "Forma starter library",
+    tags: ["Starter"],
+    light: {
+      background: "#F4F5F7",
+      surface: "#FFFFFF",
+      elevated: "#FFFFFF",
+      highlight: "#EDF1F5",
+      accent: "#3D6FB6",
+      accentPressed: "#315C98",
+      accentSubtle: "#E7EFFA",
+      secondary: "#7B6CB2",
+      text: "#20242A",
+      muted: "#626B76",
+      faint: "#8A929B",
+      border: "#DDE2E8",
+      interactiveBorder: "#8A929B",
+      onAccent: "#FFFFFF",
+    },
+    dark: {
+      background: "#191D23",
+      surface: "#222832",
+      elevated: "#29313C",
+      highlight: "#303A47",
+      accent: "#83B5FF",
+      accentPressed: "#A3C7FF",
+      accentSubtle: "#26374D",
+      secondary: "#C2B3FF",
+      text: "#F2F4F8",
+      muted: "#C1C8D2",
+      faint: "#919BA8",
+      border: "#39424F",
+      interactiveBorder: "#8693A2",
+      onAccent: "#11233B",
+    },
+    radius: 10,
+    updatedAt: Date.now(),
+    ...overrides,
+    density,
+    typography: overrides.typography ?? { ...DEFAULT_TYPOGRAPHY },
+    spacing: overrides.spacing ?? spacingForDensity(density),
+  };
+};
 
 export const STARTER_DESIGNS: StarterDesign[] = [
   {
@@ -84,6 +89,8 @@ export const STARTER_DESIGNS: StarterDesign[] = [
       },
       radius: 8,
       density: "comfortable",
+      typography: { ...DEFAULT_TYPOGRAPHY },
+      spacing: spacingForDensity("comfortable"),
       updatedAt: Date.now(),
     },
   },
