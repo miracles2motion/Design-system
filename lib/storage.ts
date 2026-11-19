@@ -51,6 +51,26 @@ export async function writeLocal<T>(key: string, value: T): Promise<void> {
   });
 }
 
+export async function removeLocal(key: string): Promise<void> {
+  const database = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction(STORE_NAME, "readwrite");
+    transaction.objectStore(STORE_NAME).delete(key);
+    transaction.oncomplete = () => {
+      database.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      database.close();
+      reject(transaction.error ?? new Error("Could not remove local project data."));
+    };
+    transaction.onabort = () => {
+      database.close();
+      reject(transaction.error ?? new Error("Removing local project data was cancelled."));
+    };
+  });
+}
+
 export async function clearLocal(): Promise<void> {
   const database = await openDatabase();
   return new Promise((resolve, reject) => {

@@ -43,7 +43,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import foundationsJson from "@/data/windows_11_pro_foundations.json";
 import uiJson from "@/data/windows_11_pro_ui.json";
 import { STARTER_DESIGNS, type StarterDesign } from "@/data/marketplace";
-import { clearLocal, readLocal, writeLocal } from "@/lib/storage";
+import { clearLocal, readLocal, removeLocal, writeLocal } from "@/lib/storage";
 import { strToU8, zipSync } from "fflate";
 import {
   contrastRatio,
@@ -66,6 +66,7 @@ type PreviewViewport = "desktop" | "tablet" | "mobile";
 type PendingProposal = { patch: Record<string, unknown>; summary: string };
 
 type ProviderConfig = { provider: Provider; model: string; baseUrl?: string };
+type RememberedProviderKey = { provider: Provider; key: string };
 
 const PROVIDERS: { id: Provider; name: string; detail: string; icon: string; sampleModel: string }[] = [
   { id: "openai", name: "OpenAI", detail: "GPT models", icon: "O", sampleModel: "gpt-4o-mini" },
@@ -416,6 +417,7 @@ function StudioView({
   model,
   baseUrl,
   apiKey,
+  rememberApiKey,
   onGoSettings,
   onToast,
 }: {
@@ -434,6 +436,7 @@ function StudioView({
   model: string;
   baseUrl?: string;
   apiKey: string;
+  rememberApiKey: boolean;
   onGoSettings: () => void;
   onToast: (message: string) => void;
 }) {
@@ -542,7 +545,7 @@ function StudioView({
           {pendingProposal && <div className="proposal-card"><div className="proposal-card__head"><span className="proposal-card__icon"><Sparkles size={13}/></span><div><b>Review token proposal</b><small>{proposalRows.length} proposed change{proposalRows.length === 1 ? "" : "s"} · draft unchanged</small></div></div><p>{pendingProposal.summary}</p><div className="proposal-diff">{proposalRows.slice(0, 6).map((row) => <div className="proposal-diff__row" key={row.label}><span>{row.label}</span><div><span className="proposal-value">{isHex(String(row.previous)) && <i style={{ background: String(row.previous) }}/>}<code>{String(row.previous)}</code></span><ArrowRight size={11}/><span className="proposal-value proposal-value--next">{isHex(String(row.next)) && <i style={{ background: String(row.next) }}/>}<code>{String(row.next)}</code></span></div></div>)}{proposalRows.length > 6 && <small className="proposal-diff__more">+ {proposalRows.length - 6} more changes</small>}</div><div className="proposal-actions"><button type="button" className="button button--subtle button--small" onClick={() => { setPendingProposal(null); onToast("Proposal discarded; your draft is unchanged"); }}>Discard</button><button type="button" className="button button--primary button--small" onClick={() => { applyPatch(pendingProposal.patch); setPendingProposal(null); onToast("Approved proposal applied to your local draft"); }}><Check size={13}/> Apply changes</button></div></div>}
           <div className="suggestion-block"><span className="suggestion-label">QUICK START</span><button type="button" className="suggestion-chip" onClick={() => { setPrompt("Create a warmer, more welcoming palette while keeping the text easy to read."); }}>Warm it up <ArrowUpRight size={12}/></button><button type="button" className="suggestion-chip" onClick={() => { setPrompt("Make the interface more compact for a data-heavy desktop dashboard."); }}>More compact <ArrowUpRight size={12}/></button><button type="button" className="suggestion-chip" onClick={() => { setPrompt("Give this system a confident, premium dark mode with a softer accent."); }}>Refine dark mode <ArrowUpRight size={12}/></button></div>
           <form className="chat-composer" onSubmit={(event) => sendPrompt(event)}><textarea id="assistant-prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={apiKey ? "Describe a change for your design system…" : "Add a provider key in Settings to chat…"} rows={3} aria-label="Describe a design change"/><div className="chat-composer__footer"><span><span className={apiKey ? "connection-dot connection-dot--on" : "connection-dot"}/>{apiKey ? "Provider key ready for this session" : "No AI key connected"}</span><button type="submit" className="send-button" disabled={!prompt.trim() || isGenerating} aria-label="Send prompt"><span>Send</span><Send size={14}/></button></div></form>
-          <p className="assistant-footnote"><ShieldCheck size={12}/> Your API key is used for this request only and isn’t saved by Forma.</p>
+          <p className="assistant-footnote"><ShieldCheck size={12}/> {rememberApiKey ? "Key is remembered in this browser by your choice and sent only with prompts." : "Key stays in memory and is sent only when you submit a prompt."}</p>
         </section>
 
         <section className="preview-panel panel">
@@ -615,6 +618,8 @@ function SettingsView({
   onExportPair,
   onToast,
   onStartChat,
+  rememberApiKey,
+  onRememberApiKeyChange,
   theme,
 }: {
   provider: Provider;
@@ -629,6 +634,8 @@ function SettingsView({
   onExportPair: () => void;
   onToast: (message: string) => void;
   onStartChat: () => void;
+  rememberApiKey: boolean;
+  onRememberApiKeyChange: (remember: boolean) => void;
   theme: ThemeDraft;
 }) {
   const [visibleKey, setVisibleKey] = useState(false);
@@ -679,11 +686,12 @@ function SettingsView({
         <div className="settings-content">
           <section className="settings-card"><div className="settings-card__head"><div><div className="settings-card__icon settings-card__icon--purple"><Sparkles size={17}/></div><div><h2>AI provider</h2><p>Bring your own key. Forma forwards it only for the request you make.</p></div></div><span className={`settings-status ${testStatus === "connected" ? "settings-status--ok" : testStatus === "error" ? "settings-status--error" : ""}`}><i/>{testStatus === "connected" ? "Connected" : testStatus === "error" ? "Check connection" : apiKey ? "Key ready" : "Not connected"}</span></div>
             <div className="provider-grid">{PROVIDERS.map((option) => <button type="button" key={option.id} className={`provider-option ${provider === option.id ? "is-selected" : ""}`} onClick={() => { onProviderChange(option.id); onModelChange(option.sampleModel); setTestStatus("idle"); }}><span className={`provider-logo provider-logo--${option.id}`}>{option.icon}</span><span><b>{option.name}</b><small>{option.detail}</small></span>{provider === option.id && <CheckCircle2 size={16} className="provider-check"/>}</button>)}</div>
-            <div className={`settings-form-grid ${provider === "custom" ? "settings-form-grid--custom" : ""}`}>{provider === "custom" && <label className="settings-field"><span>OpenAI-compatible API base URL</span><input value={baseUrl ?? ""} onChange={(event) => { onBaseUrlChange(event.target.value); setTestStatus("idle"); }} placeholder="https://api.example.com/v1" autoComplete="url" spellCheck={false}/><small>HTTPS endpoint only. Private network and local addresses are blocked by the proxy.</small></label>}<label className="settings-field"><span>Model ID</span><input value={model} onChange={(event) => { onModelChange(event.target.value); setTestStatus("idle"); }} placeholder={selectedProvider.sampleModel || "your-model-id"}/><small>Use a model ID enabled for your provider account.</small></label><label className="settings-field"><span>API key</span><div className="secret-input"><input type={visibleKey ? "text" : "password"} value={apiKey} onChange={(event) => { onApiKeyChange(event.target.value); setTestStatus("idle"); }} placeholder={`Paste your ${selectedProvider.name} key`} autoComplete="off" spellCheck={false}/><button type="button" onClick={() => setVisibleKey((value) => !value)} aria-label={visibleKey ? "Hide API key" : "Show API key"}>{visibleKey ? <EyeOff size={15}/> : <Eye size={15}/>}</button></div><small>Used in memory only. It is not saved when you close or refresh this tab.</small></label></div>
+            <div className={`settings-form-grid ${provider === "custom" ? "settings-form-grid--custom" : ""}`}>{provider === "custom" && <label className="settings-field"><span>OpenAI-compatible API base URL</span><input value={baseUrl ?? ""} onChange={(event) => { onBaseUrlChange(event.target.value); setTestStatus("idle"); }} placeholder="https://api.example.com/v1" autoComplete="url" spellCheck={false}/><small>HTTPS endpoint only. Private network and local addresses are blocked by the proxy.</small></label>}<label className="settings-field"><span>Model ID</span><input value={model} onChange={(event) => { onModelChange(event.target.value); setTestStatus("idle"); }} placeholder={selectedProvider.sampleModel || "your-model-id"}/><small>Use a model ID enabled for your provider account.</small></label><label className="settings-field"><span>API key</span><div className="secret-input"><input type={visibleKey ? "text" : "password"} value={apiKey} onChange={(event) => { onApiKeyChange(event.target.value); setTestStatus("idle"); }} placeholder={`Paste your ${selectedProvider.name} key`} autoComplete="off" spellCheck={false}/><button type="button" onClick={() => setVisibleKey((value) => !value)} aria-label={visibleKey ? "Hide API key" : "Show API key"}>{visibleKey ? <EyeOff size={15}/> : <Eye size={15}/>}</button></div><small>By default, the key stays in this tab only. Remembering it is optional.</small></label></div>
+            <label className="remember-key-option"><input type="checkbox" checked={rememberApiKey} onChange={(event) => onRememberApiKeyChange(event.target.checked)}/><span><b>Remember provider key on this device</b><small>{rememberApiKey ? "Saved in this browser’s IndexedDB; not encrypted by Forma. Avoid shared devices." : "Optional. Saves to browser storage without encryption; use only on a private device."}</small></span></label>
             <div className="settings-card__actions settings-card__actions--provider"><div className="settings-provider-actions"><button type="button" className="button button--primary" onClick={onStartChat} disabled={!apiKey.trim() || !model.trim() || (provider === "custom" && !baseUrl?.trim())}><MessageCircle size={15}/> Chat with Forma <ArrowRight size={14}/></button><button type="button" className="button button--subtle" onClick={testConnection} disabled={!apiKey.trim() || testing || !model.trim() || (provider === "custom" && !baseUrl?.trim())}>{testing ? <span className="button-spinner"/> : testStatus === "connected" ? <Check size={15}/> : <Zap size={15}/>} {testing ? "Testing provider…" : testStatus === "connected" ? "Connection verified" : "Test connection"}</button></div><span><ShieldCheck size={13}/> Testing is optional. Your key is used when you send a prompt.</span></div>
-            <div className="privacy-callout"><span><ShieldCheck size={16}/></span><div><b>Your key stays yours.</b><p>Forma doesn’t store your API key. When you ask the assistant to generate, your brief and current theme are sent to the provider you selected. Don’t include sensitive project information.</p></div></div>
+            <div className="privacy-callout"><span><ShieldCheck size={16}/></span><div><b>{rememberApiKey ? "Saved locally by your choice." : "Kept in this tab by default."}</b><p>{rememberApiKey ? "Your key is saved in this browser’s IndexedDB and is not encrypted by Forma. Avoid shared devices; turn this option off or clear local data to remove it." : "Your key stays in page memory and is cleared when you close or refresh this tab."} When you chat, your brief and current theme are sent to your selected provider; Forma does not retain the key on its server.</p></div></div>
           </section>
-          <section className="settings-card" id="local-data"><div className="settings-card__head"><div><div className="settings-card__icon settings-card__icon--blue"><HardDriveIcon/></div><div><h2>Local data</h2><p>Projects and saved designs are stored in this browser, not in an account.</p></div></div><span className="local-only-pill"><span/> On this device</span></div><div className="storage-row"><div className="storage-row__glyph"><FileText size={18}/></div><div><b>Design system drafts</b><small>Saved automatically in browser storage</small></div><span className="storage-row__value">Private to this browser</span></div><div className="storage-row"><div className="storage-row__glyph storage-row__glyph--yellow"><Bookmark size={18}/></div><div><b>Saved starter designs</b><small>Favorites are stored locally</small></div><span className="storage-row__value">No login needed</span></div><div className="settings-warning"><CircleHelp size={15}/><span>Browser storage can be cleared by your device. Download a paired ZIP backup; extract its two JSON files before importing them again.</span></div><div className="settings-card__actions settings-card__actions--between"><button type="button" className="button button--subtle" onClick={onExportPair}><Download size={14}/> Download paired backup ZIP</button>{confirmClear ? <div className="confirm-inline"><span>Clear local drafts and favorites?</span><button type="button" onClick={onClear}>Yes, clear</button><button type="button" onClick={() => setConfirmClear(false)}>Cancel</button></div> : <button type="button" className="button button--danger-ghost" onClick={() => setConfirmClear(true)}>Clear local data</button>}</div></section>
+          <section className="settings-card" id="local-data"><div className="settings-card__head"><div><div className="settings-card__icon settings-card__icon--blue"><HardDriveIcon/></div><div><h2>Local data</h2><p>Projects, saved designs, and an optional remembered provider key stay in this browser, not an account.</p></div></div><span className="local-only-pill"><span/> On this device</span></div><div className="storage-row"><div className="storage-row__glyph"><FileText size={18}/></div><div><b>Design system drafts</b><small>Saved automatically in browser storage</small></div><span className="storage-row__value">Private to this browser</span></div><div className="storage-row"><div className="storage-row__glyph storage-row__glyph--yellow"><Bookmark size={18}/></div><div><b>Saved starter designs</b><small>Favorites are stored locally</small></div><span className="storage-row__value">No login needed</span></div><div className="settings-warning"><CircleHelp size={15}/><span>Browser storage may be cleared. Clear local data also removes a remembered provider key. Paired ZIP backups contain theme files only, never API keys.</span></div><div className="settings-card__actions settings-card__actions--between"><button type="button" className="button button--subtle" onClick={onExportPair}><Download size={14}/> Download paired backup ZIP</button>{confirmClear ? <div className="confirm-inline"><span>Clear drafts, favorites, and remembered provider key?</span><button type="button" onClick={onClear}>Yes, clear</button><button type="button" onClick={() => setConfirmClear(false)}>Cancel</button></div> : <button type="button" className="button button--danger-ghost" onClick={() => setConfirmClear(true)}>Clear local data</button>}</div></section>
           <section className="settings-card settings-card--market"><div className="settings-card__head"><div><div className="settings-card__icon settings-card__icon--amber"><Layers3 size={17}/></div><div><h2>Community marketplace</h2><p>Public designs will be opt-in and moderated. Private drafts stay local.</p></div></div><span className="coming-pill">Planned</span></div><div className="marketplace-settings-row"><span className="marketplace-settings-row__icon"><ShieldCheck size={17}/></span><div><b>Nothing is published automatically</b><small>When community publishing is added, you’ll explicitly choose what to share.</small></div><button type="button" onClick={() => onToast("The first build uses a curated local starter library.")}>Details <ArrowRight size={13}/></button></div></section>
         </div>
       </div>
@@ -705,6 +713,7 @@ export default function HomePage() {
   const [favorites, setFavorites] = useState<string[]>([]);
   const [providerConfig, setProviderConfig] = useState<ProviderConfig>({ provider: "openai", model: "gpt-4o-mini", baseUrl: "" });
   const [apiKey, setApiKey] = useState("");
+  const [rememberApiKey, setRememberApiKey] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
   const [toast, setToast] = useState("");
   const [previewItem, setPreviewItem] = useState<StarterDesign | null>(null);
@@ -712,6 +721,7 @@ export default function HomePage() {
   const [importInputKey, setImportInputKey] = useState(0);
   const [showCommunityInfo, setShowCommunityInfo] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const keyPersistence = useRef<Promise<void>>(Promise.resolve());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const notify = useCallback((message: string) => {
@@ -720,6 +730,14 @@ export default function HomePage() {
     toastTimer.current = setTimeout(() => setToast(""), 3200);
   }, []);
 
+  const persistProviderKey = useCallback((value: string | null) => {
+    const operation = keyPersistence.current.catch(() => undefined).then(() => (
+      value ? writeLocal("provider-key", { provider: providerConfig.provider, key: value }) : removeLocal("provider-key")
+    ));
+    keyPersistence.current = operation.catch(() => undefined);
+    return operation;
+  }, [providerConfig.provider]);
+
   useEffect(() => {
     let alive = true;
     Promise.all([
@@ -727,8 +745,9 @@ export default function HomePage() {
       readLocal<ThemeDraft>("active-draft").catch(() => null),
       readLocal<string[]>("favorites").catch(() => null),
       readLocal<ProviderConfig>("provider-config").catch(() => null),
+      readLocal<RememberedProviderKey>("provider-key").catch(() => null),
       readLocal<AppMode>("app-mode").catch(() => null),
-    ]).then(([savedProjects, savedTheme, savedFavorites, savedProvider, savedMode]) => {
+    ]).then(([savedProjects, savedTheme, savedFavorites, savedProvider, savedApiKey, savedMode]) => {
       if (!alive) return;
       let restoredProjects = Array.isArray(savedProjects) ? savedProjects.filter(safeTheme) : safeTheme(savedTheme) ? [savedTheme] : [];
       if (!Array.isArray(savedProjects) && !safeTheme(savedTheme)) restoredProjects = [{ ...STARTER_THEME }];
@@ -741,11 +760,20 @@ export default function HomePage() {
       setProjects(restoredProjects);
       setTheme(active);
       if (Array.isArray(savedFavorites)) setFavorites(savedFavorites.filter((item) => typeof item === "string"));
-      if (savedProvider && typeof savedProvider === "object") setProviderConfig({
-        provider: PROVIDERS.some((item) => item.id === savedProvider.provider) ? savedProvider.provider : "openai",
-        model: typeof savedProvider.model === "string" ? savedProvider.model : "gpt-4o-mini",
-        baseUrl: typeof savedProvider.baseUrl === "string" ? savedProvider.baseUrl : "",
+      const restoredProvider = savedProvider && PROVIDERS.some((item) => item.id === savedProvider.provider)
+        ? savedProvider.provider
+        : "openai";
+      setProviderConfig({
+        provider: restoredProvider,
+        model: savedProvider && typeof savedProvider.model === "string" ? savedProvider.model : "gpt-4o-mini",
+        baseUrl: savedProvider && typeof savedProvider.baseUrl === "string" ? savedProvider.baseUrl : "",
       });
+      if (savedApiKey && savedApiKey.provider === restoredProvider && typeof savedApiKey.key === "string" && savedApiKey.key.trim() && savedApiKey.key.length <= 500) {
+        setApiKey(savedApiKey.key.trim());
+        setRememberApiKey(true);
+      } else if (savedApiKey) {
+        removeLocal("provider-key").catch(() => undefined);
+      }
       if (savedMode === "dark" || savedMode === "light") setAppMode(savedMode);
       setIsLoaded(true);
     });
@@ -769,6 +797,15 @@ export default function HomePage() {
   useEffect(() => {
     if (isLoaded) writeLocal("provider-config", safeProviderSettings(providerConfig)).catch(() => undefined);
   }, [providerConfig, isLoaded]);
+
+  useEffect(() => {
+    if (!isLoaded || !rememberApiKey) return;
+    const key = apiKey.trim();
+    const timeout = window.setTimeout(() => {
+      persistProviderKey(key || null).catch(() => notify("Could not remember your provider key. It will be lost when you close or refresh this tab."));
+    }, 250);
+    return () => window.clearTimeout(timeout);
+  }, [apiKey, rememberApiKey, isLoaded, notify, persistProviderKey]);
 
   useEffect(() => {
     if (isLoaded) writeLocal("app-mode", appMode).catch(() => undefined);
@@ -1046,6 +1083,30 @@ export default function HomePage() {
     }, 80);
   };
 
+  const changeProvider = (provider: Provider) => {
+    if (provider === providerConfig.provider) return;
+    setProviderConfig((config) => ({ ...config, provider }));
+    setApiKey("");
+    if (rememberApiKey) {
+      setRememberApiKey(false);
+      persistProviderKey(null).catch(() => notify("Could not remove the saved provider key from this browser."));
+    }
+  };
+
+  const changeRememberApiKey = (remember: boolean) => {
+    setRememberApiKey(remember);
+    if (!remember) {
+      persistProviderKey(null).then(() => notify("Remembered provider key removed from this browser")).catch(() => notify("Could not remove the saved provider key."));
+    } else if (apiKey.trim()) {
+      persistProviderKey(apiKey.trim()).then(() => notify("Provider key saved in this browser")).catch(() => {
+        setRememberApiKey(false);
+        notify("Could not save the provider key. It will remain in memory only.");
+      });
+    } else {
+      notify("Enter a provider key and Forma will remember it on this device.");
+    }
+  };
+
   const openProject = (project: ThemeDraft) => {
     setTheme(project);
     setHistory([]);
@@ -1054,9 +1115,9 @@ export default function HomePage() {
   };
 
   const main = view === "overview" ? <OverviewView theme={theme} projects={projects} mode={previewMode} onCreate={createNewSystem} onOpenStudio={() => onNav("studio")} onOpenAssistant={openAssistant} onOpenProject={openProject} onOpenMarketplace={() => onNav("marketplace")} onImport={openImport} onApply={applyStarter} onPreviewItem={setPreviewItem}/> :
-    view === "studio" ? <StudioView theme={theme} mode={previewMode} onModeChange={setPreviewMode} onThemeChange={updateTheme} onUndo={undo} canUndo={history.length > 0} onExport={exportJson} onExportFoundations={exportFoundations} onExportPair={exportPair} onDownloadCss={exportCss} onImport={openImport} provider={providerConfig.provider} model={providerConfig.model} baseUrl={providerConfig.baseUrl} apiKey={apiKey} onGoSettings={() => onNav("settings")} onToast={notify}/> :
+    view === "studio" ? <StudioView theme={theme} mode={previewMode} onModeChange={setPreviewMode} onThemeChange={updateTheme} onUndo={undo} canUndo={history.length > 0} onExport={exportJson} onExportFoundations={exportFoundations} onExportPair={exportPair} onDownloadCss={exportCss} onImport={openImport} provider={providerConfig.provider} model={providerConfig.model} baseUrl={providerConfig.baseUrl} apiKey={apiKey} rememberApiKey={rememberApiKey} onGoSettings={() => onNav("settings")} onToast={notify}/> :
       view === "marketplace" ? <MarketplaceView mode={previewMode} favorites={favorites} onToggleFavorite={toggleFavorite} onApply={applyStarter} onPreview={setPreviewItem}/> :
-        <SettingsView provider={providerConfig.provider} model={providerConfig.model} baseUrl={providerConfig.baseUrl} apiKey={apiKey} onProviderChange={(provider) => { setProviderConfig((config) => ({ ...config, provider })); setApiKey(""); }} onModelChange={(model) => { setProviderConfig((config) => ({ ...config, model })); }} onBaseUrlChange={(baseUrl) => { setProviderConfig((config) => ({ ...config, baseUrl })); }} onApiKeyChange={(key) => { setApiKey(key); }} onClear={async () => { await clearLocal().catch(() => undefined); setTheme({ ...STARTER_THEME, id: createId() }); setProjects([]); setFavorites([]); setHistory([]); setApiKey(""); setProviderConfig({ provider: "openai", model: "gpt-4o-mini", baseUrl: "" }); notify("Local project data cleared"); }} onExportPair={exportPair} onToast={notify} onStartChat={openAssistant} theme={theme}/>;
+        <SettingsView provider={providerConfig.provider} model={providerConfig.model} baseUrl={providerConfig.baseUrl} apiKey={apiKey} rememberApiKey={rememberApiKey} onRememberApiKeyChange={changeRememberApiKey} onProviderChange={changeProvider} onModelChange={(model) => { setProviderConfig((config) => ({ ...config, model })); }} onBaseUrlChange={(baseUrl) => { setProviderConfig((config) => ({ ...config, baseUrl })); }} onApiKeyChange={(key) => { setApiKey(key); }} onClear={async () => { setApiKey(""); setRememberApiKey(false); await keyPersistence.current.catch(() => undefined); await clearLocal().catch(() => undefined); setTheme({ ...STARTER_THEME, id: createId() }); setProjects([]); setFavorites([]); setHistory([]); setProviderConfig({ provider: "openai", model: "gpt-4o-mini", baseUrl: "" }); notify("Local project data cleared"); }} onExportPair={exportPair} onToast={notify} onStartChat={openAssistant} theme={theme}/>;
 
   return (
     <div className={`app-shell ${appMode === "dark" ? "app-shell--dark" : ""}`}>

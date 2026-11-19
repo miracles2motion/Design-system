@@ -32,7 +32,7 @@ From Overview, choose **Chat with Forma**, or add a provider key in **Settings**
 
 ## AI provider privacy
 
-Provider/model settings and a custom provider base URL may be saved in this browser. **The API key is held only in page memory** and is not put into IndexedDB, local storage, source code, or application logs. Refreshing or closing the page clears it. When you test or use the assistant, Forma sends your prompt and the current token draft to the provider you selected; review that provider's privacy and data-retention terms before sending sensitive material.
+Provider/model settings and a custom provider base URL may be saved in this browser. **By default, the API key stays in page memory** and is cleared when you close or refresh the tab. Settings includes an optional “Remember provider key on this device” checkbox; opting in stores the key in this browser’s IndexedDB so it survives refreshes. This local copy is not encrypted by Forma, so do not enable it on shared devices. Uncheck the option or use Clear local data to delete it. Keys are not included in project exports or sent to Forma analytics/logs. When you test or use the assistant, Forma forwards the key with your prompt and current token draft to the provider you selected; review that provider's privacy and data-retention terms before sending sensitive material.
 
 Custom endpoints must use HTTPS on the standard port, resolve only to public IP addresses, and implement the OpenAI-compatible chat-completions API. Local/private addresses and redirects are blocked. “Any provider” does not mean every API protocol is interchangeable.
 
