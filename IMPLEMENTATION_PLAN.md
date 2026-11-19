@@ -12,10 +12,10 @@ The repository began as a greenfield starting point. The current implementation 
 | --- | --- | --- |
 | Scaffold and fixtures | Done | Next.js App Router, TypeScript, Vercel-compatible route, and both JSON contracts are in the repository. |
 | No-login studio | Done for the first build | Overview, Studio, Discovery, Settings, responsive shell, Windows-inspired light/dark palettes, multiple IndexedDB drafts, and local favorites are wired. |
-| Preview and editing | Done for supported theme values | A token-driven SaaS dashboard preview supports desktop/tablet/mobile, palette/radius/density controls, contrast feedback, and reversible edits. It is not a rendering of arbitrary user code. |
-| Import/export | Initial implementation done | Both contracts import independently or as a pair; unknown source fields are retained. Individual JSON, paired ZIP with an updated `pairsWith`, and CSS-variable exports are available. Deep schema/reference diagnostics and full preservation tests remain future hardening. |
-| AI assistant | Initial implementation done | Named provider adapters plus constrained OpenAI-compatible custom endpoints; keys stay in page memory by default, with an explicit optional on-device remember control; proposals are validated and reviewed before apply. Provider-specific capability fallbacks need ongoing testing. |
-| Deployment/security QA | Local QA passed; Vercel deployment pending project connection | Clean `npm ci`, all 8 contract/API regression tests, TypeScript and strict unused-code checks, production build, and production-server header/API body-limit/SSRF smoke checks pass. No automated browser suite, live provider-key test, or Vercel project deployment has been performed. Community publishing and any Sheets/Apps Script backend remain deferred. |
+| Preview and editing | Done for supported theme values, including Brand Foundations v1 | The token-driven SaaS dashboard preview supports desktop/tablet/mobile, palette/radius/density controls, editable typography and five spacing metrics, contrast feedback, and reversible edits. It is not a rendering of arbitrary user code. |
+| Import/export | Initial implementation done | Both contracts import independently or as a pair; typography and spacing map into the draft and back out, and unknown source fields remain attached for round-tripping. Individual JSON, paired ZIP with an updated `pairsWith`, and CSS-variable exports are available. Deeper schema/reference diagnostics remain future hardening. |
+| AI assistant | Initial implementation done | Named provider adapters plus constrained OpenAI-compatible custom endpoints; keys stay in page memory by default, with an explicit optional on-device remember control. Proposals may include bounded typography and spacing fields and are validated, diffed, previewed, and reviewed before apply. Provider-specific capability fallbacks need ongoing testing. |
+| Deployment/security QA | Unit/build and interactive browser QA passed; Vercel deployment pending project connection | `npm test` passes all 16 tests, `npm run typecheck` passes, and the production build succeeds. Desktop and 390px mobile browser checks covered create-from-scratch, foundation editing and reload persistence, live preview updates, dark/mobile rendering, both import/export flows (including paired ZIP, CSS, and unknown-field preservation), and assistant review-before-apply. No persisted browser test suite or live provider-key test has been performed. Vercel project deployment remains pending a project connection. Community publishing and any Sheets/Apps Script backend remain deferred. |
 
 ## 2. What the supplied files establish
 
@@ -133,6 +133,13 @@ Treat imported JSON and AI output as untrusted input. Enforce file-size limits, 
 - Begin with supported adapters and add provider-specific capability fallbacks rather than pretending all endpoints behave identically.
 - **Exit:** a user can enter a brief, choose manual or agent-suggested colors, approve changes, and export a valid pair; invalid keys/provider responses fail safely.
 
+### Brand Foundations v1 — implemented (19 November 2026)
+- Add bounded, editable font family/body size/heading size/line-height controls and page margin/section gap/card padding/control height/row height controls.
+- Apply the typography and spacing CSS variables to the built-in dashboard preview and expose the tokens in the explorer.
+- Map the fields through OpenUI and foundations imports/exports, preserve unknown source fields, and include them in CSS-variable export.
+- Allow the assistant to propose typed typography and spacing patches; show every field in the review diff and preview before users apply it.
+- **Exit:** users can create/import a draft, edit type and spacing, observe the preview update, round-trip both supported JSON contracts, and validate assistant proposals. Validation, serialization, and assistant-route tests cover the new fields.
+
 ### Phase 4 — Hardening and Vercel release
 - Add keyboard/screen-reader checks, responsive testing, provider failure states, request limits, log redaction, security headers, and Playwright end-to-end coverage.
 - Deploy a preview and production build on Vercel; document local-first storage, BYOK handling, supported schemas/providers, and preview fidelity limitations.
@@ -142,7 +149,8 @@ Treat imported JSON and AI output as untrusted input. Enforce file-size limits, 
 
 - No sign-up or login required; editing and preset preview work without a key.
 - Users can import either supplied JSON format, or both as a pair, and can create a theme from a plain-language brief.
-- Users can supply colors themselves or ask the agent to propose them; agent changes are validated, reviewable, and undoable.
+- Users can edit typography (font family, body/heading sizes, line height) and spacing (page margin, section gap, card padding, control height, row height) and see those values update the preview.
+- Typography and spacing map through supported imports/exports; unknown source fields remain preserved, and assistant changes are validated, diffed, previewable, reviewable, and undoable.
 - The imported or generated tokens update the built-in sample website live; light/dark modes, responsive layouts, and supported component/state variants can be inspected.
 - Exports match the supplied `openui-1.0` and `openui-foundations-draft` shapes, with no unresolved color references and a correct pair filename.
 - Keys are not persisted server-side or included in logs/telemetry; users can clear local projects and settings.

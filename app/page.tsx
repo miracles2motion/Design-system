@@ -46,7 +46,14 @@ import { STARTER_DESIGNS, type StarterDesign } from "@/data/marketplace";
 import { clearLocal, readLocal, removeLocal, writeLocal } from "@/lib/storage";
 import { strToU8, zipSync } from "fflate";
 import {
+  applyThemeProposal,
   contrastRatio,
+  FONT_FAMILY_LABELS,
+  importFoundationsDocument,
+  importOpenUiDocument,
+  normalizeThemeDraft,
+  parseThemeProposal,
+  spacingForDensity,
   STARTER_THEME,
   themeCssVars,
   toCssFile,
@@ -55,6 +62,9 @@ import {
   type ThemeDraft,
   type ThemeMode,
   type ThemePalette,
+  type ThemeProposalPatch,
+  type ThemeSpacing,
+  type ThemeTypography,
 } from "@/lib/theme";
 
 type View = "overview" | "studio" | "marketplace" | "settings";
@@ -62,7 +72,7 @@ type Provider = "openai" | "anthropic" | "gemini" | "openrouter" | "nvidia" | "c
 type ChatMessage = { id: string; role: "assistant" | "user"; text: string };
 type AppMode = "light" | "dark";
 type PreviewViewport = "desktop" | "tablet" | "mobile";
-type PendingProposal = { patch: Record<string, unknown>; summary: string };
+type PendingProposal = { patch: ThemeProposalPatch; summary: string };
 
 type ProviderConfig = { provider: Provider; model: string; baseUrl?: string };
 type RememberedProviderKey = { provider: Provider; key: string };
@@ -80,7 +90,7 @@ const INITIAL_MESSAGES: ChatMessage[] = [
   {
     id: "welcome",
     role: "assistant",
-    text: "Describe your product and the mood you want. I can propose light/dark color roles, corner radius, density, and theme name/description. I receive only your prompt and current theme values—not your website, assets, or code. Review every proposal before applying.",
+    text: "Describe your product and the mood you want. I can propose light/dark colors, typography, spacing, corner radius, density, and theme details. I receive only your prompt and current theme values—not your website, assets, or code. Review every proposal before applying.",
   },
 ];
 
@@ -102,35 +112,51 @@ const PROPOSAL_PALETTE_ROLES: { key: keyof ThemePalette; label: string }[] = [
   { key: "text", label: "Text" },
 ];
 
+const PROPOSAL_PALETTE_LABELS: Record<keyof ThemePalette, string> = {
+  background: "Canvas",
+  surface: "Surface",
+  elevated: "Elevated",
+  highlight: "Highlight",
+  accent: "Accent",
+  accentPressed: "Accent pressed",
+  accentSubtle: "Accent subtle",
+  secondary: "Secondary",
+  text: "Text",
+  muted: "Muted text",
+  faint: "Faint text",
+  border: "Border",
+  interactiveBorder: "Interactive border",
+  onAccent: "On accent",
+};
+
+const PROPOSAL_FOUNDATION_LABELS: Record<string, string> = {
+  family: "Font family",
+  bodySize: "Body size",
+  headingSize: "Heading size",
+  lineHeight: "Line height",
+  pageMargin: "Page margin",
+  sectionGap: "Section gap",
+  cardPadding: "Card padding",
+  controlHeight: "Control height",
+  rowHeight: "Row height",
+};
+
+const PROPOSAL_ROOT_LABELS: Record<string, string> = {
+  name: "Theme name",
+  description: "Description",
+  radius: "Corner radius",
+  density: "Density",
+};
+
+function proposalFieldLabel(group: string, field: string): string {
+  if (group === "light" || group === "dark") {
+    return `${group === "light" ? "Light" : "Dark"} ${PROPOSAL_PALETTE_LABELS[field as keyof ThemePalette] ?? field}`;
+  }
+  return PROPOSAL_FOUNDATION_LABELS[field] ?? field;
+}
+
 function isHex(value: string): boolean {
   return /^#[\da-f]{6}$/i.test(value);
-}
-
-function safeTheme(value: unknown): value is ThemeDraft {
-  if (!value || typeof value !== "object") return false;
-  const draft = value as Partial<ThemeDraft>;
-  const paletteKeys: (keyof ThemePalette)[] = ["background", "surface", "elevated", "highlight", "accent", "accentPressed", "accentSubtle", "secondary", "text", "muted", "faint", "border", "interactiveBorder", "onAccent"];
-  const validPalette = (palette: unknown) => Boolean(palette) && typeof palette === "object" && paletteKeys.every((key) => isHex(String((palette as ThemePalette)[key] ?? "")));
-  return typeof draft.id === "string" && typeof draft.name === "string" &&
-    typeof draft.description === "string" && typeof draft.author === "string" &&
-    Array.isArray(draft.tags) && validPalette(draft.light) && validPalette(draft.dark) &&
-    typeof draft.radius === "number" && Number.isFinite(draft.radius) && draft.radius >= 0 && draft.radius <= 24 &&
-    (draft.density === "comfortable" || draft.density === "compact");
-}
-
-function themeWithProposal(theme: ThemeDraft, patch: Record<string, unknown>): ThemeDraft {
-  const next = { ...theme };
-  if (typeof patch.name === "string") next.name = patch.name;
-  if (typeof patch.description === "string") next.description = patch.description;
-  if (typeof patch.radius === "number") next.radius = patch.radius;
-  if (patch.density === "comfortable" || patch.density === "compact") next.density = patch.density;
-  if (patch.light && typeof patch.light === "object" && !Array.isArray(patch.light)) {
-    next.light = { ...theme.light, ...(patch.light as Partial<ThemePalette>) };
-  }
-  if (patch.dark && typeof patch.dark === "object" && !Array.isArray(patch.dark)) {
-    next.dark = { ...theme.dark, ...(patch.dark as Partial<ThemePalette>) };
-  }
-  return next;
 }
 
 function upsertDraft(list: ThemeDraft[], draft: ThemeDraft): ThemeDraft[] {
@@ -312,6 +338,33 @@ function ColorInput({
   );
 }
 
+function ThemeRange({
+  id,
+  label,
+  value,
+  min,
+  max,
+  step = 1,
+  unit = " dp",
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  unit?: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div className="foundation-range">
+      <div className="control-label-row"><label htmlFor={id}>{label}</label><span>{value}{unit}</span></div>
+      <input id={id} className="range-control" type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))}/>
+    </div>
+  );
+}
+
 function MiniStat({ label, value, icon, tone }: { label: string; value: string; icon: React.ReactNode; tone: string }) {
   return <div className="mini-stat"><span className={`mini-stat__icon ${tone}`}>{icon}</span><div><small>{label}</small><b>{value}</b></div></div>;
 }
@@ -465,7 +518,7 @@ function StudioView({
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
   const [prompt, setPrompt] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [activeInspector, setActiveInspector] = useState<"colors" | "style" | "tokens">("colors");
+  const [activeInspector, setActiveInspector] = useState<"colors" | "style" | "foundations" | "tokens">("colors");
   const [activeTokenGroup, setActiveTokenGroup] = useState("Colors");
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [viewport, setViewport] = useState<PreviewViewport>("desktop");
@@ -473,8 +526,8 @@ function StudioView({
   const [pendingProposal, setPendingProposal] = useState<PendingProposal | null>(null);
   const [previewingProposal, setPreviewingProposal] = useState(false);
 
-  const applyPatch = (patch: Record<string, unknown>) => {
-    onThemeChange((draft) => ({ ...themeWithProposal(draft, patch), updatedAt: Date.now() }));
+  const applyPatch = (patch: ThemeProposalPatch) => {
+    onThemeChange((draft) => ({ ...applyThemeProposal(draft, patch), updatedAt: Date.now() }));
   };
 
   const sendPrompt = async (event?: React.FormEvent, preset?: string) => {
@@ -489,7 +542,7 @@ function StudioView({
     setMessages((items) => [...items, userMessage]);
     setPrompt("");
     if (!apiKey) {
-      setMessages((items) => [...items, { id: createId(), role: "assistant", text: "Your request is ready. Add a provider key in Settings and I’ll turn it into a reviewable token proposal. You can still adjust palette colors, corner radius, and density manually right now." }]);
+      setMessages((items) => [...items, { id: createId(), role: "assistant", text: "Your request is ready. Add a provider key in Settings and I’ll turn it into a reviewable token proposal. You can still adjust palette colors, typography, spacing, corner radius, and density manually right now." }]);
       onToast("Add a provider key to generate with the assistant");
       return;
     }
@@ -498,13 +551,13 @@ function StudioView({
       const response = await fetch("/api/assistant", {
         method: "POST",
         headers: { "content-type": "application/json", "x-provider-api-key": apiKey },
-        body: JSON.stringify({ provider, model, ...(provider === "custom" ? { baseUrl } : {}), prompt: text, current: { name: theme.name, description: theme.description, light: theme.light, dark: theme.dark, radius: theme.radius, density: theme.density } }),
+        body: JSON.stringify({ provider, model, ...(provider === "custom" ? { baseUrl } : {}), prompt: text, current: { name: theme.name, description: theme.description, light: theme.light, dark: theme.dark, radius: theme.radius, density: theme.density, typography: theme.typography, spacing: theme.spacing } }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "The generation request failed.");
       if (!data.patch || typeof data.patch !== "object") throw new Error("The provider returned a malformed token proposal.");
-      const patch = data.patch as Record<string, unknown>;
-      const summary = typeof patch.summary === "string" ? patch.summary : "I’ve prepared a token proposal. Review the changes below before applying them.";
+      const patch = parseThemeProposal(data.patch);
+      const summary = patch.summary ?? "I’ve prepared a token proposal. Review the changes below before applying them.";
       setPendingProposal({ patch, summary });
       setPreviewingProposal(false);
       setMessages((items) => [...items, { id: createId(), role: "assistant", text: "I’ve prepared a proposal. Review the changes below; nothing has been applied yet." }]);
@@ -526,10 +579,17 @@ function StudioView({
     ["color/openui_bg", palette.background, "Color"],
     ["color/openui_text_primary", palette.text, "Color"],
     ["radius/card", `${theme.radius} dp`, "Dimension"],
-    ["space/card_pad", theme.density === "compact" ? "12 dp" : "16 dp", "Dimension"],
-    ["type/body", "Fixed in template", "Typography"],
+    ["space/page_margin", `${theme.spacing.pageMargin} dp`, "Dimension"],
+    ["space/section_gap", `${theme.spacing.sectionGap} dp`, "Dimension"],
+    ["space/card_pad", `${theme.spacing.cardPadding} dp`, "Dimension"],
+    ["size/control_height", `${theme.spacing.controlHeight} dp`, "Dimension"],
+    ["size/row_height", `${theme.spacing.rowHeight} dp`, "Dimension"],
+    ["type/family", FONT_FAMILY_LABELS[theme.typography.family], "Typography"],
+    ["type/body", `${theme.typography.bodySize} px`, "Typography"],
+    ["type/heading", `${theme.typography.headingSize} px`, "Typography"],
+    ["type/line_height", `${theme.typography.lineHeight} ×`, "Typography"],
   ];
-  const proposalTheme = pendingProposal ? themeWithProposal(theme, pendingProposal.patch) : theme;
+  const proposalTheme = pendingProposal ? applyThemeProposal(theme, pendingProposal.patch) : theme;
   const proposalPaletteModes = pendingProposal ? (["light", "dark"] as const).filter((paletteMode) => {
     const value = pendingProposal.patch[paletteMode];
     return Boolean(value && typeof value === "object" && !Array.isArray(value) &&
@@ -539,13 +599,21 @@ function StudioView({
     if (key === "summary") return [];
     if ((key === "light" || key === "dark") && value && typeof value === "object" && !Array.isArray(value)) {
       return Object.entries(value as Record<string, unknown>).map(([field, next]) => ({
-        label: `${key}.${field}`,
+        label: proposalFieldLabel(key, field),
         previous: theme[key as ThemeMode][field as keyof ThemePalette],
         next,
       }));
     }
+    if ((key === "typography" || key === "spacing") && value && typeof value === "object" && !Array.isArray(value)) {
+      const current = theme[key] as ThemeTypography | ThemeSpacing;
+      return Object.entries(value as Record<string, unknown>).map(([field, next]) => ({
+        label: proposalFieldLabel(key, field),
+        previous: current[field as keyof typeof current],
+        next,
+      }));
+    }
     const previous = key === "radius" ? theme.radius : key === "density" ? theme.density : key === "name" ? theme.name : key === "description" ? theme.description : "—";
-    return [{ label: key, previous, next: value }];
+    return [{ label: PROPOSAL_ROOT_LABELS[key] ?? key, previous, next: value }];
   }) : [];
   const proposalPreviewActive = Boolean(pendingProposal && previewingProposal);
   const displayedPreviewTheme = proposalPreviewActive ? proposalTheme : theme;
@@ -558,7 +626,7 @@ function StudioView({
       </div>
       <div className="studio-grid">
         <section className="assistant-panel panel">
-          <div className="panel-header"><div className="panel-title"><span className="panel-icon panel-icon--purple"><Sparkles size={16}/></span><div><h2>Design assistant</h2><small>Token proposals · palettes, corner radius & density</small></div></div><button className="more-button" type="button" aria-label="More assistant options"><MoreHorizontal size={17}/></button></div>
+          <div className="panel-header"><div className="panel-title"><span className="panel-icon panel-icon--purple"><Sparkles size={16}/></span><div><h2>Design assistant</h2><small>Token proposals · color, type, spacing & shape</small></div></div><button className="more-button" type="button" aria-label="More assistant options"><MoreHorizontal size={17}/></button></div>
           <div className="assistant-context"><span className="assistant-context__avatar"><Sparkles size={14}/></span><div><b>Working on {theme.name}</b><small>{apiKey ? `Key ready · ${PROVIDERS.find((item) => item.id === provider)?.name ?? provider}` : "Add a provider key in Settings"}</small></div><button type="button" onClick={onGoSettings} aria-label="Provider settings"><Settings size={14}/></button></div>
           <div className="chat-thread">
             {messages.map((message) => <div className={`chat-message chat-message--${message.role}`} key={message.id}>{message.role === "assistant" && <span className="chat-avatar"><Sparkles size={13}/></span>}<div className="chat-message__bubble">{message.text}</div></div>)}
@@ -600,10 +668,31 @@ function StudioView({
 
         <section className="inspector-panel panel">
           <div className="panel-header"><div className="panel-title"><span className="panel-icon panel-icon--amber"><SlidersHorizontal size={15}/></span><div><h2>Theme controls</h2><small>Adjust your foundation</small></div></div><button className="more-button" type="button" aria-label="More theme controls"><MoreHorizontal size={17}/></button></div>
-          <div className="inspector-tabs" role="tablist"><button type="button" role="tab" className={activeInspector === "colors" ? "is-active" : ""} onClick={() => setActiveInspector("colors")}>Colors</button><button type="button" role="tab" className={activeInspector === "style" ? "is-active" : ""} onClick={() => setActiveInspector("style")}>Style</button><button type="button" role="tab" className={activeInspector === "tokens" ? "is-active" : ""} onClick={() => setActiveInspector("tokens")}>Tokens</button></div>
+          <div className="inspector-tabs" role="tablist"><button type="button" role="tab" className={activeInspector === "colors" ? "is-active" : ""} onClick={() => setActiveInspector("colors")}>Colors</button><button type="button" role="tab" className={activeInspector === "style" ? "is-active" : ""} onClick={() => setActiveInspector("style")}>Style</button><button type="button" role="tab" className={activeInspector === "foundations" ? "is-active" : ""} onClick={() => setActiveInspector("foundations")}>Type + space</button><button type="button" role="tab" className={activeInspector === "tokens" ? "is-active" : ""} onClick={() => setActiveInspector("tokens")}>Tokens</button></div>
           {activeInspector === "colors" && <div className="inspector-body"><div className="inspector-subheading"><div><b>{mode === "light" ? "Light palette" : "Dark palette"}</b><small>Editing {mode} mode</small></div><span className="color-pair-count">7 roles</span></div><div className="color-fields">{COLOR_FIELDS.map((field) => <ColorInput key={field.key} label={field.label} description={field.description} value={palette[field.key]} onChange={(value) => onThemeChange((draft) => ({ ...draft, [mode]: { ...draft[mode], [field.key]: value }, updatedAt: Date.now() }))}/>)}</div><button className="mode-switch-link" type="button" onClick={() => onModeChange(mode === "light" ? "dark" : "light")}>Edit {mode === "light" ? "dark" : "light"} palette <ArrowRight size={13}/></button><div className={`contrast-card ${accessibilityPass ? "contrast-card--pass" : "contrast-card--warn"}`}><span className="contrast-card__icon"><ShieldCheck size={15}/></span><div><b>{accessibilityPass ? "Text contrast looks good" : "Check text contrast"}</b><small>{contrast ? `${contrast}:1 · body text on canvas` : "Contrast could not be measured"}</small></div><span className="contrast-badge">{accessibilityPass ? "AA" : "REVIEW"}</span></div></div>}
-          {activeInspector === "style" && <div className="inspector-body"><div className="inspector-subheading"><div><b>Shape & density</b><small>Set the overall feel</small></div></div><div className="control-group"><div className="control-label-row"><label htmlFor="radius-range">Corner radius</label><span>{theme.radius} dp</span></div><input id="radius-range" className="range-control" type="range" min="0" max="24" value={theme.radius} onChange={(event) => onThemeChange((draft) => ({ ...draft, radius: Number(event.target.value), updatedAt: Date.now() }))}/><div className="range-ends"><span>Sharp</span><span>Soft</span></div></div><div className="control-group"><div className="control-label-row"><span>Density</span></div><div className="density-choices"><button type="button" className={theme.density === "comfortable" ? "is-selected" : ""} onClick={() => onThemeChange((draft) => ({ ...draft, density: "comfortable", updatedAt: Date.now() }))}><span className="density-icon density-icon--comfortable"><i/><i/><i/></span><b>Comfortable</b><small>More breathing room</small></button><button type="button" className={theme.density === "compact" ? "is-selected" : ""} onClick={() => onThemeChange((draft) => ({ ...draft, density: "compact", updatedAt: Date.now() }))}><span className="density-icon density-icon--compact"><i/><i/><i/></span><b>Compact</b><small>More on screen</small></button></div></div><div className="foundations-note"><span className="foundations-note__icon"><Layers3 size={14}/></span><div><b>Built on a token system</b><p>Palette, radius, and density update this template; typography and component-specific styling remain fixed.</p></div></div></div>}
-          {activeInspector === "tokens" && <div className="inspector-body token-explorer"><div className="inspector-subheading"><div><b>Token explorer</b><small>Example tokens · {exampleTokens.length} shown</small></div><button className="filter-small" type="button"><Filter size={13}/></button></div><div className="token-group-list"><button type="button" className={activeTokenGroup === "Colors" ? "is-open" : ""} onClick={() => setActiveTokenGroup(activeTokenGroup === "Colors" ? "" : "Colors")}><ChevronDown size={13}/> Colors <span>3</span></button>{activeTokenGroup === "Colors" && exampleTokens.slice(0, 3).map(([name, value, type]) => <div className="token-row" key={name}><span className="token-color-dot" style={{ background: value.startsWith("#") ? value : "transparent" }}/><span><b>{name}</b><small>{type}</small></span><code>{value}</code></div>)}<button type="button" className={activeTokenGroup === "Dimensions" ? "is-open" : ""} onClick={() => setActiveTokenGroup(activeTokenGroup === "Dimensions" ? "" : "Dimensions")}><ChevronDown size={13}/> Dimensions <span>2</span></button>{activeTokenGroup === "Dimensions" && exampleTokens.slice(3, 5).map(([name, value, type]) => <div className="token-row" key={name}><span className="token-dimension-icon">↔</span><span><b>{name}</b><small>{type}</small></span><code>{value}</code></div>)}<button type="button" className={activeTokenGroup === "Typography" ? "is-open" : ""} onClick={() => setActiveTokenGroup(activeTokenGroup === "Typography" ? "" : "Typography")}><ChevronDown size={13}/> Typography <span>1</span></button>{activeTokenGroup === "Typography" && exampleTokens.slice(5).map(([name, value, type]) => <div className="token-row" key={name}><span className="token-type-icon">Aa</span><span><b>{name}</b><small>{type}</small></span><code>{value}</code></div>)}</div><div className="token-footer"><span>Schema</span><b>openui-1.0</b><span className="schema-dot"/></div></div>}
+          {activeInspector === "style" && <div className="inspector-body"><div className="inspector-subheading"><div><b>Shape & density</b><small>Set the overall feel</small></div></div><div className="control-group"><div className="control-label-row"><label htmlFor="radius-range">Corner radius</label><span>{theme.radius} dp</span></div><input id="radius-range" className="range-control" type="range" min="0" max="24" value={theme.radius} onChange={(event) => onThemeChange((draft) => ({ ...draft, radius: Number(event.target.value), updatedAt: Date.now() }))}/><div className="range-ends"><span>Sharp</span><span>Soft</span></div></div><div className="control-group"><div className="control-label-row"><span>Density</span></div><div className="density-choices"><button type="button" className={theme.density === "comfortable" ? "is-selected" : ""} onClick={() => onThemeChange((draft) => ({ ...draft, density: "comfortable", spacing: spacingForDensity("comfortable"), updatedAt: Date.now() }))}><span className="density-icon density-icon--comfortable"><i/><i/><i/></span><b>Comfortable</b><small>More breathing room</small></button><button type="button" className={theme.density === "compact" ? "is-selected" : ""} onClick={() => onThemeChange((draft) => ({ ...draft, density: "compact", spacing: spacingForDensity("compact"), updatedAt: Date.now() }))}><span className="density-icon density-icon--compact"><i/><i/><i/></span><b>Compact</b><small>More on screen</small></button></div></div><div className="foundations-note"><span className="foundations-note__icon"><Layers3 size={14}/></span><div><b>Built on a token system</b><p>Palette, typography, shape, and spacing update this template live.</p></div></div></div>}
+          {activeInspector === "foundations" && <div className="inspector-body foundation-controls">
+            <div className="inspector-subheading"><div><b>Typography & spacing</b><small>Fine-tune the foundation tokens</small></div></div>
+            <section className="foundation-control-card">
+              <div className="foundation-control-card__heading"><b>Typography</b><small>Type scales update the preview</small></div>
+              <label className="foundation-select-field" htmlFor="font-family-select"><span>Font family</span><select id="font-family-select" value={theme.typography.family} onChange={(event) => onThemeChange((draft) => ({ ...draft, typography: { ...draft.typography, family: event.target.value as ThemeTypography["family"] }, updatedAt: Date.now() }))}>{Object.entries(FONT_FAMILY_LABELS).map(([family, label]) => <option key={family} value={family}>{label}</option>)}</select><ChevronDown size={12}/></label>
+              <ThemeRange id="body-size-range" label="Body size" value={theme.typography.bodySize} min={12} max={18} unit=" px" onChange={(value) => onThemeChange((draft) => ({ ...draft, typography: { ...draft.typography, bodySize: value }, updatedAt: Date.now() }))}/>
+              <ThemeRange id="heading-size-range" label="Heading size" value={theme.typography.headingSize} min={20} max={40} unit=" px" onChange={(value) => onThemeChange((draft) => ({ ...draft, typography: { ...draft.typography, headingSize: value }, updatedAt: Date.now() }))}/>
+              <ThemeRange id="line-height-range" label="Line height" value={theme.typography.lineHeight} min={1.2} max={1.8} step={0.1} unit=" ×" onChange={(value) => onThemeChange((draft) => ({ ...draft, typography: { ...draft.typography, lineHeight: value }, updatedAt: Date.now() }))}/>
+            </section>
+            <section className="foundation-control-card foundation-control-card--spacing">
+              <div className="foundation-control-card__heading"><b>Spacing</b><small>Adjust layout rhythm and component sizing</small></div>
+              <div className="foundation-control-grid">
+                <ThemeRange id="page-margin-range" label="Page margin" value={theme.spacing.pageMargin} min={8} max={48} onChange={(value) => onThemeChange((draft) => ({ ...draft, spacing: { ...draft.spacing, pageMargin: value }, updatedAt: Date.now() }))}/>
+                <ThemeRange id="section-gap-range" label="Section gap" value={theme.spacing.sectionGap} min={4} max={32} onChange={(value) => onThemeChange((draft) => ({ ...draft, spacing: { ...draft.spacing, sectionGap: value }, updatedAt: Date.now() }))}/>
+                <ThemeRange id="card-padding-range" label="Card padding" value={theme.spacing.cardPadding} min={4} max={32} onChange={(value) => onThemeChange((draft) => ({ ...draft, spacing: { ...draft.spacing, cardPadding: value }, updatedAt: Date.now() }))}/>
+                <ThemeRange id="control-height-range" label="Control height" value={theme.spacing.controlHeight} min={24} max={48} onChange={(value) => onThemeChange((draft) => ({ ...draft, spacing: { ...draft.spacing, controlHeight: value }, updatedAt: Date.now() }))}/>
+                <ThemeRange id="row-height-range" label="Row height" value={theme.spacing.rowHeight} min={40} max={96} onChange={(value) => onThemeChange((draft) => ({ ...draft, spacing: { ...draft.spacing, rowHeight: value }, updatedAt: Date.now() }))}/>
+              </div>
+            </section>
+            <div className="foundations-note"><span className="foundations-note__icon"><Layers3 size={14}/></span><div><b>Saved as foundation tokens</b><p>Typography and spacing are included in OpenUI, foundations, and CSS exports.</p></div></div>
+          </div>}
+          {activeInspector === "tokens" && <div className="inspector-body token-explorer"><div className="inspector-subheading"><div><b>Token explorer</b><small>Example tokens · {exampleTokens.length} shown</small></div><button className="filter-small" type="button"><Filter size={13}/></button></div><div className="token-group-list"><button type="button" className={activeTokenGroup === "Colors" ? "is-open" : ""} onClick={() => setActiveTokenGroup(activeTokenGroup === "Colors" ? "" : "Colors")}><ChevronDown size={13}/> Colors <span>3</span></button>{activeTokenGroup === "Colors" && exampleTokens.slice(0, 3).map(([name, value, type]) => <div className="token-row" key={name}><span className="token-color-dot" style={{ background: value.startsWith("#") ? value : "transparent" }}/><span><b>{name}</b><small>{type}</small></span><code>{value}</code></div>)}<button type="button" className={activeTokenGroup === "Dimensions" ? "is-open" : ""} onClick={() => setActiveTokenGroup(activeTokenGroup === "Dimensions" ? "" : "Dimensions")}><ChevronDown size={13}/> Dimensions <span>6</span></button>{activeTokenGroup === "Dimensions" && exampleTokens.slice(3, 9).map(([name, value, type]) => <div className="token-row" key={name}><span className="token-dimension-icon">↔</span><span><b>{name}</b><small>{type}</small></span><code>{value}</code></div>)}<button type="button" className={activeTokenGroup === "Typography" ? "is-open" : ""} onClick={() => setActiveTokenGroup(activeTokenGroup === "Typography" ? "" : "Typography")}><ChevronDown size={13}/> Typography <span>4</span></button>{activeTokenGroup === "Typography" && exampleTokens.slice(9).map(([name, value, type]) => <div className="token-row" key={name}><span className="token-type-icon">Aa</span><span><b>{name}</b><small>{type}</small></span><code>{value}</code></div>)}</div><div className="token-footer"><span>Schema</span><b>openui-1.0</b><span className="schema-dot"/></div></div>}
           <div className="inspector-bottom"><button type="button" className="text-button" onClick={onExport}><Download size={14}/> Export this theme</button><span>Changes save to this browser</span></div>
         </section>
       </div>
@@ -707,8 +796,8 @@ function SettingsView({
           provider,
           model,
           ...(provider === "custom" ? { baseUrl } : {}),
-          prompt: "Connection check: return a tiny JSON patch with name set to the existing name, radius set to the current radius, density set to the current density, and summary set to 'Provider connection successful'. Do not change the palettes.",
-          current: { name: theme.name, radius: theme.radius, density: theme.density, light: theme.light, dark: theme.dark },
+          prompt: "Connection check: return a tiny JSON patch with name set to the existing name, radius set to the current radius, density set to the current density, and summary set to 'Provider connection successful'. Do not change typography, spacing, or the palettes.",
+          current: { name: theme.name, radius: theme.radius, density: theme.density, light: theme.light, dark: theme.dark, typography: theme.typography, spacing: theme.spacing },
         }),
       });
       const data = await response.json();
@@ -793,13 +882,16 @@ export default function HomePage() {
       readLocal<AppMode>("app-mode").catch(() => null),
     ]).then(([savedProjects, savedTheme, savedFavorites, savedProvider, savedApiKey, savedMode]) => {
       if (!alive) return;
-      let restoredProjects = Array.isArray(savedProjects) ? savedProjects.filter(safeTheme) : safeTheme(savedTheme) ? [savedTheme] : [];
-      if (!Array.isArray(savedProjects) && !safeTheme(savedTheme)) restoredProjects = [{ ...STARTER_THEME }];
-      if (safeTheme(savedTheme) && (!Array.isArray(savedProjects) || restoredProjects.some((item) => item.id === savedTheme.id))) {
-        restoredProjects = upsertDraft(restoredProjects, savedTheme);
+      const restoredTheme = normalizeThemeDraft(savedTheme);
+      let restoredProjects = Array.isArray(savedProjects)
+        ? savedProjects.map(normalizeThemeDraft).filter((item): item is ThemeDraft => item !== null)
+        : restoredTheme ? [restoredTheme] : [];
+      if (!Array.isArray(savedProjects) && !restoredTheme) restoredProjects = [{ ...STARTER_THEME }];
+      if (restoredTheme && (!Array.isArray(savedProjects) || restoredProjects.some((item) => item.id === restoredTheme.id))) {
+        restoredProjects = upsertDraft(restoredProjects, restoredTheme);
       }
-      const active = safeTheme(savedTheme) && restoredProjects.some((item) => item.id === savedTheme.id)
-        ? restoredProjects.find((item) => item.id === savedTheme.id)!
+      const active = restoredTheme && restoredProjects.some((item) => item.id === restoredTheme.id)
+        ? restoredProjects.find((item) => item.id === restoredTheme.id)!
         : restoredProjects[0] ?? { ...STARTER_THEME };
       setProjects(restoredProjects);
       setTheme(active);
@@ -1009,83 +1101,27 @@ export default function HomePage() {
       if (uiEntry && !uiEntry.document.openuiTheme) throw new Error("This openui-1.0 file is missing openuiTheme.");
       if (foundationsEntry && !foundationsEntry.document.accent_palette_default_blue) throw new Error("This foundations file is missing its accent palette.");
 
+      const foundationsValues = foundationsEntry
+        ? importFoundationsDocument(foundationsEntry.document, STARTER_THEME)
+        : null;
+      const sourceUiTheme = uiEntry?.document.openuiTheme;
+      const uiDensity = sourceUiTheme && typeof sourceUiTheme === "object" && !Array.isArray(sourceUiTheme) &&
+        (sourceUiTheme as Record<string, unknown>).density === "compact" ? "compact" : "comfortable";
+      const uiBase: ThemeDraft = foundationsValues
+        ? { ...STARTER_THEME, ...foundationsValues }
+        : { ...STARTER_THEME, density: uiDensity, spacing: spacingForDensity(uiDensity) };
+      const uiValues = uiEntry ? importOpenUiDocument(uiEntry.document, uiBase) : null;
       const next: ThemeDraft = {
         ...STARTER_THEME,
+        ...(foundationsValues ?? {}),
+        ...(uiValues ?? {}),
         id: createId(),
-        light: { ...STARTER_THEME.light },
-        dark: { ...STARTER_THEME.dark },
+        light: { ...(uiValues?.light ?? foundationsValues?.light ?? STARTER_THEME.light) },
+        dark: { ...(uiValues?.dark ?? foundationsValues?.dark ?? STARTER_THEME.dark) },
         sourceUi: uiEntry?.document,
         sourceFoundations: foundationsEntry?.document,
         updatedAt: Date.now(),
       };
-
-      if (uiEntry) {
-        const document = uiEntry.document;
-        const openuiTheme = document.openuiTheme as Record<string, unknown>;
-        const light = (openuiTheme.light_colors && typeof openuiTheme.light_colors === "object" ? openuiTheme.light_colors : {}) as Record<string, unknown>;
-        const dark = (openuiTheme.dark_colors && typeof openuiTheme.dark_colors === "object" ? openuiTheme.dark_colors : {}) as Record<string, unknown>;
-        const nextPalette = (current: ThemePalette, source: Record<string, unknown>): ThemePalette => ({
-          ...current,
-          background: typeof source.openui_bg === "string" && isHex(source.openui_bg) ? source.openui_bg : current.background,
-          surface: typeof source.openui_fg === "string" && isHex(source.openui_fg) ? source.openui_fg : current.surface,
-          elevated: typeof source.openui_elevated === "string" && isHex(source.openui_elevated) ? source.openui_elevated : current.elevated,
-          highlight: typeof source.openui_highlight === "string" && isHex(source.openui_highlight) ? source.openui_highlight : current.highlight,
-          accent: typeof source.openui_accent === "string" && isHex(source.openui_accent) ? source.openui_accent : current.accent,
-          accentPressed: typeof source.openui_accent_pressed === "string" && isHex(source.openui_accent_pressed) ? source.openui_accent_pressed : current.accentPressed,
-          accentSubtle: typeof source.openui_accent_subtle === "string" && isHex(source.openui_accent_subtle) ? source.openui_accent_subtle : current.accentSubtle,
-          secondary: typeof source.openui_secondary === "string" && isHex(source.openui_secondary) ? source.openui_secondary : current.secondary,
-          text: typeof source.openui_text_primary === "string" && isHex(source.openui_text_primary) ? source.openui_text_primary : current.text,
-          muted: typeof source.openui_text_secondary === "string" && isHex(source.openui_text_secondary) ? source.openui_text_secondary : current.muted,
-          faint: typeof source.openui_text_tertiary === "string" && isHex(source.openui_text_tertiary) ? source.openui_text_tertiary : current.faint,
-          border: typeof source.openui_border_default === "string" && isHex(source.openui_border_default) ? source.openui_border_default : current.border,
-          interactiveBorder: typeof source.openui_border_interactive === "string" && isHex(source.openui_border_interactive) ? source.openui_border_interactive : current.interactiveBorder,
-          onAccent: typeof source.openui_text_on_accent === "string" && isHex(source.openui_text_on_accent) ? source.openui_text_on_accent : current.onAccent,
-        });
-        const radii = (openuiTheme.radii_dp && typeof openuiTheme.radii_dp === "object" ? openuiTheme.radii_dp : {}) as Record<string, unknown>;
-        next.name = typeof openuiTheme.title === "string" ? openuiTheme.title : typeof document.title === "string" ? document.title : "Imported design system";
-        next.description = "Imported from an openui-1.0 file.";
-        next.light = nextPalette(next.light, light);
-        next.dark = nextPalette(next.dark, dark);
-        next.radius = typeof radii.card === "number" ? Math.max(0, Math.min(24, radii.card)) : next.radius;
-        next.density = openuiTheme.density === "compact" ? "compact" : "comfortable";
-      }
-
-      if (foundationsEntry && !uiEntry) {
-        const document = foundationsEntry.document;
-        const accent = document.accent_palette_default_blue as Record<string, unknown>;
-        const states = document.states && typeof document.states === "object" ? document.states as Record<string, unknown> : {};
-        const lightStates = states.light && typeof states.light === "object" ? states.light as Record<string, unknown> : {};
-        const darkStates = states.dark && typeof states.dark === "object" ? states.dark as Record<string, unknown> : {};
-        const materials = document.materials && typeof document.materials === "object" ? document.materials as Record<string, unknown> : {};
-        const mica = materials.mica && typeof materials.mica === "object" ? materials.mica as Record<string, unknown> : {};
-        const acrylic = materials.acrylic && typeof materials.acrylic === "object" ? materials.acrylic as Record<string, unknown> : {};
-        const radii = document.radii_dp && typeof document.radii_dp === "object" ? document.radii_dp as Record<string, unknown> : {};
-        const spacing = document.spacing_dp && typeof document.spacing_dp === "object" ? document.spacing_dp as Record<string, unknown> : {};
-        const chart = document.chart_palette && typeof document.chart_palette === "object" ? document.chart_palette as Record<string, unknown> : {};
-        const chartLight = Array.isArray(chart.light) ? chart.light : [];
-        const chartDark = Array.isArray(chart.dark) ? chart.dark : [];
-        const color = (value: unknown, fallback: string) => typeof value === "string" && isHex(value) ? value : fallback;
-        next.name = typeof document.title === "string" ? document.title.replace(/ foundations$/i, "") : "Imported foundations";
-        next.description = "Imported from an openui-foundations-draft file. UI colors are adapted from the foundation palette.";
-        next.light = {
-          ...next.light,
-          background: color(mica.light, next.light.background),
-          surface: color(acrylic.light, next.light.surface),
-          accent: color(accent.dark1, color(accent.base, next.light.accent)),
-          accentPressed: color(lightStates.accent_pressed, next.light.accentPressed),
-          secondary: color(chartLight[2], next.light.secondary),
-        };
-        next.dark = {
-          ...next.dark,
-          background: color(mica.dark, next.dark.background),
-          surface: color(acrylic.dark, next.dark.surface),
-          accent: color(accent.light2, color(accent.base, next.dark.accent)),
-          accentPressed: color(darkStates.accent_pressed, next.dark.accentPressed),
-          secondary: color(chartDark[2], next.dark.secondary),
-        };
-        next.radius = typeof radii.overlay === "number" ? Math.max(0, Math.min(24, radii.overlay)) : next.radius;
-        next.density = typeof spacing.page_margin === "number" && spacing.page_margin <= 16 ? "compact" : "comfortable";
-      }
 
       updateTheme(() => next);
       setPreviewMode("light");
@@ -1097,7 +1133,7 @@ export default function HomePage() {
           ? "Imported the OpenUI and foundations pair; source fields are preserved."
           : uiEntry
             ? "Imported openui-1.0; its original token data is preserved."
-            : "Imported foundations draft; palette, radius, and spacing are mapped to the preview.");
+            : "Imported foundations draft; palette, typography, radius, and spacing are mapped to the preview.");
     } catch (error) {
       notify(error instanceof Error ? error.message : "Could not import this JSON file.");
     }

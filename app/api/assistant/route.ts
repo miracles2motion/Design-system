@@ -2,6 +2,7 @@ import { lookup } from "node:dns/promises";
 import { request as httpsRequest } from "node:https";
 import { isIP, type LookupFunction } from "node:net";
 import { NextResponse } from "next/server";
+import { parseThemeProposal } from "../../../lib/theme";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -78,10 +79,6 @@ async function readJsonBody(request: Request): Promise<unknown> {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function validHex(value: unknown): value is string {
-  return typeof value === "string" && /^#[\da-f]{6}$/i.test(value);
 }
 
 function isPublicAddress(address: string): boolean {
@@ -209,37 +206,6 @@ function postCustomProvider(
   });
 }
 
-function parsePatch(raw: unknown) {
-  if (!isObject(raw)) throw new Error("The model returned an invalid response.");
-  const patch: Record<string, unknown> = {};
-  if (typeof raw.name === "string") patch.name = raw.name.slice(0, 64);
-  if (typeof raw.description === "string") patch.description = raw.description.slice(0, 160);
-  if (typeof raw.summary === "string") patch.summary = raw.summary.slice(0, 500);
-  if (raw.radius !== undefined) {
-    const radius = Number(raw.radius);
-    if (!Number.isFinite(radius) || radius < 0 || radius > 24) throw new Error("The model proposed an unsupported corner radius.");
-    patch.radius = Math.round(radius);
-  }
-  if (raw.density === "comfortable" || raw.density === "compact") patch.density = raw.density;
-  for (const mode of ["light", "dark"] as const) {
-    if (raw[mode] === undefined) continue;
-    if (!isObject(raw[mode])) throw new Error("The model returned an invalid color palette.");
-    const palette: Record<string, string> = {};
-    for (const key of ["background", "surface", "elevated", "highlight", "accent", "accentPressed", "accentSubtle", "secondary", "text", "muted", "faint", "border", "interactiveBorder", "onAccent"]) {
-      const value = raw[mode][key];
-      if (value !== undefined) {
-        if (!validHex(value)) throw new Error(`The model returned an invalid ${mode} color for ${key}.`);
-        palette[key] = value.toUpperCase();
-      }
-    }
-    if (Object.keys(palette).length > 0) patch[mode] = palette;
-  }
-  if (!Object.keys(patch).some((key) => key !== "summary")) {
-    throw new Error("The model did not return any usable design changes.");
-  }
-  return patch;
-}
-
 function extractOpenAiText(payload: unknown): string {
   if (!isObject(payload) || !Array.isArray(payload.choices)) return "";
   const choice = payload.choices[0];
@@ -291,8 +257,9 @@ export async function POST(request: Request) {
     const systemPrompt = [
       "You are Forma, a careful design-token assistant. Propose visual token values, not HTML, CSS, code, or arbitrary tool calls.",
       "Return one JSON object only, with no markdown. Include a short summary and any changed fields from the allowed shape.",
-      "Allowed shape: {summary:string,name?:string,description?:string,radius?:number,density?:'comfortable'|'compact',light?:{background,surface,elevated,highlight,accent,accentPressed,accentSubtle,secondary,text,muted,faint,border,interactiveBorder,onAccent},dark?:{same fields}}.",
+      "Allowed shape: {summary:string,name?:string,description?:string,radius?:number,density?:'comfortable'|'compact',light?:{background,surface,elevated,highlight,accent,accentPressed,accentSubtle,secondary,text,muted,faint,border,interactiveBorder,onAccent},dark?:{same fields},typography?:{family?:'humanist'|'system'|'serif'|'monospace',bodySize?:integer 12..18,headingSize?:integer 20..40,lineHeight?:number 1.2..1.8 in 0.1 steps},spacing?:{pageMargin?:integer 8..48,sectionGap?:integer 4..32,cardPadding?:integer 4..32,controlHeight?:integer 24..48,rowHeight?:integer 40..96}}.",
       "All color values must be six-digit hex. Do not add properties outside the allowed shape. Keep user-provided constraints. Prefer accessible text and accent pairings. The application will validate your values.",
+      "Typography family must use one of the listed IDs. Only propose changed typography or spacing fields; do not invent additional token properties.",
     ].join(" ");
     const prompt = `User request: ${userPrompt}\nCurrent design system summary: ${JSON.stringify(current).slice(0, 5000)}\nReturn a JSON patch only.`;
 
@@ -364,7 +331,7 @@ export async function POST(request: Request) {
     const jsonEnd = text.lastIndexOf("}");
     if (jsonStart < 0 || jsonEnd <= jsonStart) throw new Error("The model did not return JSON. Try again or choose another model.");
     const rawPatch = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
-    const patch = parsePatch(rawPatch);
+    const patch = parseThemeProposal(rawPatch);
     return NextResponse.json({ patch }, { headers: NO_STORE_HEADERS });
   } catch (error) {
     const message = error instanceof Error ? error.message : "The request could not be completed.";

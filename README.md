@@ -21,10 +21,11 @@ npm run build
 
 - Overview, AI Studio, Discovery, and Settings views; no account or login is required.
 - A Windows/Fluent-inspired light and dark starter theme, plus five bundled gallery designs. The gallery is discovery-only; it has no checkout or public publishing backend.
-- A live sample SaaS dashboard preview with light/dark modes and desktop, tablet, and mobile layouts. Palette, radius, and density edits apply immediately to the preview.
+- A live sample SaaS dashboard preview with light/dark modes and desktop, tablet, and mobile layouts. Palette, typography, spacing, radius, and density edits apply immediately to the preview.
+- Editable Brand Foundations v1 controls for font family, body and heading sizes, line height, page margin, section gap, card padding, control height, and row height. Foundation values are validated, included in token examples, and exported to both supported JSON contracts and CSS variables.
 - Local drafts and saved gallery favorites in IndexedDB, with multiple projects and a paired ZIP backup. Extract the two JSON files before importing that backup; the app’s import control accepts either contract or both files together.
 - Import for either `openui-1.0` or `openui-foundations-draft`, including importing both files together. Imported source objects are retained for round-tripping unknown fields. Exports include the OpenUI file, the foundations file, a matching `pairsWith` filename in the foundations contract, and CSS variables.
-- BYOK assistant adapters for OpenAI, Anthropic/Claude, Gemini, OpenRouter, NVIDIA NIM, and custom OpenAI-compatible endpoints. Proposals are validated server-side and shown for review before they are applied. Undo is available in the Studio.
+- BYOK assistant adapters for OpenAI, Anthropic/Claude, Gemini, OpenRouter, NVIDIA NIM, and custom OpenAI-compatible endpoints. Proposals may include validated typography and spacing fields as well as palette and shape changes; the Studio shows a diff and temporary preview for review before applying them. Undo is available in the Studio.
 
 ## Chat with Forma
 
@@ -32,9 +33,9 @@ From Overview, choose **Chat with Forma**, or add a provider key in **Settings**
 
 ## Agent capability and preview boundary
 
-The current assistant is a constrained **design-token proposer**, not a website inspector or code-writing agent. Each request sends your prompt plus the active theme's name, description, light/dark color palettes, corner radius, and density. It does not receive your website URL, page markup, repository, screenshots, images, or raw imported source documents, and it cannot call arbitrary tools. Its validated patch can change the theme name/description, palette roles, radius, and density; it cannot author HTML/CSS, change a logo or assets, choose typefaces, or design a new page/component layout.
+The current assistant is a constrained **design-token proposer**, not a website inspector or code-writing agent. Each request sends your prompt plus the active theme's name, description, light/dark color palettes, corner radius, density, typography, and spacing. It does not receive your website URL, page markup, repository, screenshots, images, or raw imported source documents, and it cannot call arbitrary tools. Its validated patch can change the theme name/description, palette roles, radius, density, font family, body and heading sizes, line height, and the five supported spacing values; it cannot author HTML/CSS, change a logo or assets, or design a new page/component layout.
 
-Those supported tokens do shape the built-in SaaS dashboard's surfaces, text, accents, corner treatment, and density in light and dark modes. However, the sample website is a fixed Forma template, not your own website. The current editor/preview has no independently editable typography, component-specific variants/states, image/brand assets, or arbitrary layout tokens. Imports can preserve unknown source fields for export, but that does not make those fields editable by the assistant or rendered in the preview. Use exported tokens/CSS in your own website to apply the supported foundation there.
+Those supported tokens shape the built-in SaaS dashboard's surfaces, text, accents, typography, spacing, corner treatment, and density in light and dark modes. The sample website is a fixed Forma template, not your own website. Imported fields that the editor does not map are retained in the original source data for export, but are not independently editable or rendered in the preview. Use exported tokens/CSS in your own website to apply the supported foundation there.
 
 ## AI provider privacy
 
