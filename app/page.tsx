@@ -52,7 +52,6 @@ import {
   toCssFile,
   toFoundationsDocument,
   toOpenUiDocument,
-  type Density,
   type ThemeDraft,
   type ThemeMode,
   type ThemePalette,
@@ -81,7 +80,7 @@ const INITIAL_MESSAGES: ChatMessage[] = [
   {
     id: "welcome",
     role: "assistant",
-    text: "Tell me what you’re designing and the mood you want—for example, “a calm palette for a wellness app.” I’ll propose token changes for review; nothing changes until you apply them.",
+    text: "Describe your product and the mood you want. I can propose light/dark color roles, corner radius, density, and theme name/description. I receive only your prompt and current theme values—not your website, assets, or code. Review every proposal before applying.",
   },
 ];
 
@@ -93,6 +92,14 @@ const COLOR_FIELDS: { key: keyof ThemePalette; label: string; description: strin
   { key: "text", label: "Primary text", description: "Headings and body text" },
   { key: "muted", label: "Secondary text", description: "Supporting labels" },
   { key: "border", label: "Default border", description: "Separators and card outlines" },
+];
+
+const PROPOSAL_PALETTE_ROLES: { key: keyof ThemePalette; label: string }[] = [
+  { key: "background", label: "Canvas" },
+  { key: "surface", label: "Surface" },
+  { key: "accent", label: "Accent" },
+  { key: "secondary", label: "Secondary" },
+  { key: "text", label: "Text" },
 ];
 
 function isHex(value: string): boolean {
@@ -109,6 +116,21 @@ function safeTheme(value: unknown): value is ThemeDraft {
     Array.isArray(draft.tags) && validPalette(draft.light) && validPalette(draft.dark) &&
     typeof draft.radius === "number" && Number.isFinite(draft.radius) && draft.radius >= 0 && draft.radius <= 24 &&
     (draft.density === "comfortable" || draft.density === "compact");
+}
+
+function themeWithProposal(theme: ThemeDraft, patch: Record<string, unknown>): ThemeDraft {
+  const next = { ...theme };
+  if (typeof patch.name === "string") next.name = patch.name;
+  if (typeof patch.description === "string") next.description = patch.description;
+  if (typeof patch.radius === "number") next.radius = patch.radius;
+  if (patch.density === "comfortable" || patch.density === "compact") next.density = patch.density;
+  if (patch.light && typeof patch.light === "object" && !Array.isArray(patch.light)) {
+    next.light = { ...theme.light, ...(patch.light as Partial<ThemePalette>) };
+  }
+  if (patch.dark && typeof patch.dark === "object" && !Array.isArray(patch.dark)) {
+    next.dark = { ...theme.dark, ...(patch.dark as Partial<ThemePalette>) };
+  }
+  return next;
 }
 
 function upsertDraft(list: ThemeDraft[], draft: ThemeDraft): ThemeDraft[] {
@@ -449,19 +471,10 @@ function StudioView({
   const [viewport, setViewport] = useState<PreviewViewport>("desktop");
   const [showLargePreview, setShowLargePreview] = useState(false);
   const [pendingProposal, setPendingProposal] = useState<PendingProposal | null>(null);
+  const [previewingProposal, setPreviewingProposal] = useState(false);
 
   const applyPatch = (patch: Record<string, unknown>) => {
-    onThemeChange((draft) => {
-      const next = { ...draft };
-      if (typeof patch.name === "string") next.name = patch.name;
-      if (typeof patch.description === "string") next.description = patch.description;
-      if (typeof patch.radius === "number") next.radius = patch.radius;
-      if (patch.density === "comfortable" || patch.density === "compact") next.density = patch.density as Density;
-      if (patch.light && typeof patch.light === "object") next.light = { ...next.light, ...(patch.light as Partial<ThemePalette>) };
-      if (patch.dark && typeof patch.dark === "object") next.dark = { ...next.dark, ...(patch.dark as Partial<ThemePalette>) };
-      next.updatedAt = Date.now();
-      return next;
-    });
+    onThemeChange((draft) => ({ ...themeWithProposal(draft, patch), updatedAt: Date.now() }));
   };
 
   const sendPrompt = async (event?: React.FormEvent, preset?: string) => {
@@ -476,7 +489,7 @@ function StudioView({
     setMessages((items) => [...items, userMessage]);
     setPrompt("");
     if (!apiKey) {
-      setMessages((items) => [...items, { id: createId(), role: "assistant", text: "Your request is ready. Add a provider key in Settings and I’ll turn it into a reviewable token change. You can still adjust colors, spacing, and shape manually right now." }]);
+      setMessages((items) => [...items, { id: createId(), role: "assistant", text: "Your request is ready. Add a provider key in Settings and I’ll turn it into a reviewable token proposal. You can still adjust palette colors, corner radius, and density manually right now." }]);
       onToast("Add a provider key to generate with the assistant");
       return;
     }
@@ -493,6 +506,7 @@ function StudioView({
       const patch = data.patch as Record<string, unknown>;
       const summary = typeof patch.summary === "string" ? patch.summary : "I’ve prepared a token proposal. Review the changes below before applying them.";
       setPendingProposal({ patch, summary });
+      setPreviewingProposal(false);
       setMessages((items) => [...items, { id: createId(), role: "assistant", text: "I’ve prepared a proposal. Review the changes below; nothing has been applied yet." }]);
       onToast("Review the proposed token changes before applying");
     } catch (error) {
@@ -513,11 +527,17 @@ function StudioView({
     ["color/openui_text_primary", palette.text, "Color"],
     ["radius/card", `${theme.radius} dp`, "Dimension"],
     ["space/card_pad", theme.density === "compact" ? "12 dp" : "16 dp", "Dimension"],
-    ["type/body", "Segoe UI · 14 / 20", "Typography"],
+    ["type/body", "Fixed in template", "Typography"],
   ];
+  const proposalTheme = pendingProposal ? themeWithProposal(theme, pendingProposal.patch) : theme;
+  const proposalPaletteModes = pendingProposal ? (["light", "dark"] as const).filter((paletteMode) => {
+    const value = pendingProposal.patch[paletteMode];
+    return Boolean(value && typeof value === "object" && !Array.isArray(value) &&
+      Object.values(value as Record<string, unknown>).some((color) => isHex(String(color))));
+  }) : [];
   const proposalRows = pendingProposal ? Object.entries(pendingProposal.patch).flatMap(([key, value]) => {
     if (key === "summary") return [];
-    if ((key === "light" || key === "dark") && value && typeof value === "object") {
+    if ((key === "light" || key === "dark") && value && typeof value === "object" && !Array.isArray(value)) {
       return Object.entries(value as Record<string, unknown>).map(([field, next]) => ({
         label: `${key}.${field}`,
         previous: theme[key as ThemeMode][field as keyof ThemePalette],
@@ -527,6 +547,8 @@ function StudioView({
     const previous = key === "radius" ? theme.radius : key === "density" ? theme.density : key === "name" ? theme.name : key === "description" ? theme.description : "—";
     return [{ label: key, previous, next: value }];
   }) : [];
+  const proposalPreviewActive = Boolean(pendingProposal && previewingProposal);
+  const displayedPreviewTheme = proposalPreviewActive ? proposalTheme : theme;
 
   return (
     <div className="page-stack studio-view">
@@ -536,34 +558,56 @@ function StudioView({
       </div>
       <div className="studio-grid">
         <section className="assistant-panel panel">
-          <div className="panel-header"><div className="panel-title"><span className="panel-icon panel-icon--purple"><Sparkles size={16}/></span><div><h2>Design assistant</h2><small>Describe the feeling, I’ll shape the tokens</small></div></div><button className="more-button" type="button" aria-label="More assistant options"><MoreHorizontal size={17}/></button></div>
+          <div className="panel-header"><div className="panel-title"><span className="panel-icon panel-icon--purple"><Sparkles size={16}/></span><div><h2>Design assistant</h2><small>Token proposals · palettes, corner radius & density</small></div></div><button className="more-button" type="button" aria-label="More assistant options"><MoreHorizontal size={17}/></button></div>
           <div className="assistant-context"><span className="assistant-context__avatar"><Sparkles size={14}/></span><div><b>Working on {theme.name}</b><small>{apiKey ? `Key ready · ${PROVIDERS.find((item) => item.id === provider)?.name ?? provider}` : "Add a provider key in Settings"}</small></div><button type="button" onClick={onGoSettings} aria-label="Provider settings"><Settings size={14}/></button></div>
           <div className="chat-thread">
             {messages.map((message) => <div className={`chat-message chat-message--${message.role}`} key={message.id}>{message.role === "assistant" && <span className="chat-avatar"><Sparkles size={13}/></span>}<div className="chat-message__bubble">{message.text}</div></div>)}
             {isGenerating && <div className="chat-message chat-message--assistant"><span className="chat-avatar"><Sparkles size={13}/></span><div className="chat-message__bubble typing"><i/><i/><i/> Building a token proposal…</div></div>}
           </div>
-          {pendingProposal && <div className="proposal-card"><div className="proposal-card__head"><span className="proposal-card__icon"><Sparkles size={13}/></span><div><b>Review token proposal</b><small>{proposalRows.length} proposed change{proposalRows.length === 1 ? "" : "s"} · draft unchanged</small></div></div><p>{pendingProposal.summary}</p><div className="proposal-diff">{proposalRows.slice(0, 6).map((row) => <div className="proposal-diff__row" key={row.label}><span>{row.label}</span><div><span className="proposal-value">{isHex(String(row.previous)) && <i style={{ background: String(row.previous) }}/>}<code>{String(row.previous)}</code></span><ArrowRight size={11}/><span className="proposal-value proposal-value--next">{isHex(String(row.next)) && <i style={{ background: String(row.next) }}/>}<code>{String(row.next)}</code></span></div></div>)}{proposalRows.length > 6 && <small className="proposal-diff__more">+ {proposalRows.length - 6} more changes</small>}</div><div className="proposal-actions"><button type="button" className="button button--subtle button--small" onClick={() => { setPendingProposal(null); onToast("Proposal discarded; your draft is unchanged"); }}>Discard</button><button type="button" className="button button--primary button--small" onClick={() => { applyPatch(pendingProposal.patch); setPendingProposal(null); onToast("Approved proposal applied to your local draft"); }}><Check size={13}/> Apply changes</button></div></div>}
+          {pendingProposal && <div className="proposal-card">
+            <div className="proposal-card__head"><span className="proposal-card__icon"><Sparkles size={13}/></span><div><b>Review token proposal</b><small>{proposalRows.length} proposed change{proposalRows.length === 1 ? "" : "s"} · draft unchanged</small></div></div>
+            <p>{pendingProposal.summary}</p>
+            {proposalPaletteModes.length > 0 && <div className="proposal-palette-preview">
+              <div className="proposal-palette-preview__heading"><b>Proposed palette</b><span>Resulting colors by mode</span></div>
+              {proposalPaletteModes.map((paletteMode) => <div className="proposal-palette-preview__mode" key={paletteMode}>
+                <b>{paletteMode === "light" ? "Light mode" : "Dark mode"}</b>
+                <div className="proposal-palette-preview__roles">{PROPOSAL_PALETTE_ROLES.map(({ key, label }) => <div className="proposal-palette-preview__role" key={key}>
+                  <span>{label}</span><i style={{ backgroundColor: proposalTheme[paletteMode][key] }} title={`${paletteMode} ${label}: ${proposalTheme[paletteMode][key]}`}/>
+                </div>)}</div>
+              </div>)}
+            </div>}
+            <div className="proposal-diff__heading"><b>Change details</b><span>{proposalRows.length > 5 ? "Scroll for all · Current → proposed" : "Current → proposed"}</span></div>
+            <div className="proposal-diff" aria-label="All proposed token changes">{proposalRows.map((row) => <div className="proposal-diff__row" key={row.label}>
+              <span title={row.label}>{row.label}</span><div>
+                <span className="proposal-value">{isHex(String(row.previous)) && <i style={{ backgroundColor: String(row.previous) }} title={`Current ${row.label}: ${String(row.previous)}`}/>}<code>{String(row.previous)}</code></span>
+                <ArrowRight size={11}/>
+                <span className="proposal-value proposal-value--next">{isHex(String(row.next)) && <i style={{ backgroundColor: String(row.next) }} title={`Proposed ${row.label}: ${String(row.next)}`}/>}<code>{String(row.next)}</code></span>
+              </div>
+            </div>)}</div>
+            <button type="button" className="proposal-preview-toggle" aria-pressed={previewingProposal} onClick={() => setPreviewingProposal((current) => !current)}>{previewingProposal ? <EyeOff size={13}/> : <Eye size={13}/>}<span>{previewingProposal ? "Exit proposal preview" : "Preview on sample website"}</span><small>Draft stays unchanged</small></button>
+            <div className="proposal-actions"><button type="button" className="button button--subtle button--small" onClick={() => { setPendingProposal(null); setPreviewingProposal(false); onToast("Proposal discarded; your draft is unchanged"); }}>Discard</button><button type="button" className="button button--primary button--small" onClick={() => { applyPatch(pendingProposal.patch); setPendingProposal(null); setPreviewingProposal(false); onToast("Approved proposal applied to your local draft"); }}><Check size={13}/> Apply changes</button></div>
+          </div>}
           <div className="suggestion-block"><span className="suggestion-label">QUICK START</span><button type="button" className="suggestion-chip" onClick={() => { setPrompt("Create a warmer, more welcoming palette while keeping the text easy to read."); }}>Warm it up <ArrowUpRight size={12}/></button><button type="button" className="suggestion-chip" onClick={() => { setPrompt("Make the interface more compact for a data-heavy desktop dashboard."); }}>More compact <ArrowUpRight size={12}/></button><button type="button" className="suggestion-chip" onClick={() => { setPrompt("Give this system a confident, premium dark mode with a softer accent."); }}>Refine dark mode <ArrowUpRight size={12}/></button></div>
           <form className="chat-composer" onSubmit={(event) => sendPrompt(event)}><textarea id="assistant-prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={apiKey ? "Describe a change for your design system…" : "Add a provider key in Settings to chat…"} rows={3} aria-label="Describe a design change"/><div className="chat-composer__footer"><span><span className={apiKey ? "connection-dot connection-dot--on" : "connection-dot"}/>{apiKey ? "Provider key ready for this session" : "No AI key connected"}</span><button type="submit" className="send-button" disabled={!prompt.trim() || isGenerating} aria-label="Send prompt"><span>Send</span><Send size={14}/></button></div></form>
           <p className="assistant-footnote"><ShieldCheck size={12}/> {rememberApiKey ? "Key is remembered in this browser by your choice and sent only with prompts." : "Key stays in memory and is sent only when you submit a prompt."}</p>
         </section>
 
         <section className="preview-panel panel">
-          <div className="panel-header preview-panel__header"><div className="panel-title"><span className="panel-icon panel-icon--blue"><Eye size={16}/></span><div><h2>Sample website</h2><small>Live preview · tokens update as you edit</small></div></div><div className="preview-controls"><div className="mode-toggle" role="group" aria-label="Preview mode"><button type="button" className={mode === "light" ? "is-active" : ""} onClick={() => onModeChange("light")} aria-label="Light preview"><Sun size={14}/></button><button type="button" className={mode === "dark" ? "is-active" : ""} onClick={() => onModeChange("dark")} aria-label="Dark preview"><Moon size={14}/></button></div><label className="preview-width"><PanelLeft size={14}/><select value={viewport} onChange={(event) => setViewport(event.target.value as PreviewViewport)} aria-label="Sample website viewport"><option value="desktop">Desktop</option><option value="tablet">Tablet</option><option value="mobile">Mobile</option></select><ChevronDown size={12}/></label><IconButton label="Open preview in larger view" onClick={() => setShowLargePreview(true)}><ArrowUpRight size={15}/></IconButton></div></div>
-          <div className={`preview-stage preview-stage--${viewport}`}><div className="preview-stage__top"><span><i/> NORTHSTAR / WORKSPACE</span><span className="preview-stage__zoom">{viewport === "desktop" ? "1440 px" : viewport === "tablet" ? "768 px" : "390 px"}</span></div><SampleWebsite theme={theme} mode={mode} viewport={viewport}/></div>
-          <div className="preview-panel__footer"><span><span className="live-indicator"/> Live theme preview</span><span>Built-in dashboard template <span className="footer-dot">·</span> {viewport === "desktop" ? "1440 px" : viewport === "tablet" ? "768 px" : "390 px"}</span></div>
+          <div className="panel-header preview-panel__header"><div className="panel-title"><span className="panel-icon panel-icon--blue"><Eye size={16}/></span><div><h2>Sample website</h2><small>{proposalPreviewActive ? "Proposal preview · draft unchanged" : "Live preview · tokens update as you edit"}</small></div></div><div className="preview-controls"><div className="mode-toggle" role="group" aria-label="Preview mode"><button type="button" className={mode === "light" ? "is-active" : ""} onClick={() => onModeChange("light")} aria-label="Light preview"><Sun size={14}/></button><button type="button" className={mode === "dark" ? "is-active" : ""} onClick={() => onModeChange("dark")} aria-label="Dark preview"><Moon size={14}/></button></div><label className="preview-width"><PanelLeft size={14}/><select value={viewport} onChange={(event) => setViewport(event.target.value as PreviewViewport)} aria-label="Sample website viewport"><option value="desktop">Desktop</option><option value="tablet">Tablet</option><option value="mobile">Mobile</option></select><ChevronDown size={12}/></label><IconButton label="Open preview in larger view" onClick={() => setShowLargePreview(true)}><ArrowUpRight size={15}/></IconButton></div></div>
+          <div className={`preview-stage preview-stage--${viewport}`}><div className="preview-stage__top">{proposalPreviewActive ? <span className="preview-stage__proposal-label"><Sparkles size={10}/> PROPOSAL PREVIEW · NOT APPLIED</span> : <span><i/> NORTHSTAR / WORKSPACE</span>}<span className="preview-stage__zoom">{viewport === "desktop" ? "1440 px" : viewport === "tablet" ? "768 px" : "390 px"}</span></div><SampleWebsite theme={displayedPreviewTheme} mode={mode} viewport={viewport}/></div>
+          <div className="preview-panel__footer"><span><span className={`live-indicator ${proposalPreviewActive ? "live-indicator--proposal" : ""}`}/>{proposalPreviewActive ? "Unapplied proposal" : "Live theme preview"}</span><span>Built-in dashboard template <span className="footer-dot">·</span> {viewport === "desktop" ? "1440 px" : viewport === "tablet" ? "768 px" : "390 px"}</span></div>
         </section>
 
         <section className="inspector-panel panel">
           <div className="panel-header"><div className="panel-title"><span className="panel-icon panel-icon--amber"><SlidersHorizontal size={15}/></span><div><h2>Theme controls</h2><small>Adjust your foundation</small></div></div><button className="more-button" type="button" aria-label="More theme controls"><MoreHorizontal size={17}/></button></div>
           <div className="inspector-tabs" role="tablist"><button type="button" role="tab" className={activeInspector === "colors" ? "is-active" : ""} onClick={() => setActiveInspector("colors")}>Colors</button><button type="button" role="tab" className={activeInspector === "style" ? "is-active" : ""} onClick={() => setActiveInspector("style")}>Style</button><button type="button" role="tab" className={activeInspector === "tokens" ? "is-active" : ""} onClick={() => setActiveInspector("tokens")}>Tokens</button></div>
           {activeInspector === "colors" && <div className="inspector-body"><div className="inspector-subheading"><div><b>{mode === "light" ? "Light palette" : "Dark palette"}</b><small>Editing {mode} mode</small></div><span className="color-pair-count">7 roles</span></div><div className="color-fields">{COLOR_FIELDS.map((field) => <ColorInput key={field.key} label={field.label} description={field.description} value={palette[field.key]} onChange={(value) => onThemeChange((draft) => ({ ...draft, [mode]: { ...draft[mode], [field.key]: value }, updatedAt: Date.now() }))}/>)}</div><button className="mode-switch-link" type="button" onClick={() => onModeChange(mode === "light" ? "dark" : "light")}>Edit {mode === "light" ? "dark" : "light"} palette <ArrowRight size={13}/></button><div className={`contrast-card ${accessibilityPass ? "contrast-card--pass" : "contrast-card--warn"}`}><span className="contrast-card__icon"><ShieldCheck size={15}/></span><div><b>{accessibilityPass ? "Text contrast looks good" : "Check text contrast"}</b><small>{contrast ? `${contrast}:1 · body text on canvas` : "Contrast could not be measured"}</small></div><span className="contrast-badge">{accessibilityPass ? "AA" : "REVIEW"}</span></div></div>}
-          {activeInspector === "style" && <div className="inspector-body"><div className="inspector-subheading"><div><b>Shape & density</b><small>Set the overall feel</small></div></div><div className="control-group"><div className="control-label-row"><label htmlFor="radius-range">Corner radius</label><span>{theme.radius} dp</span></div><input id="radius-range" className="range-control" type="range" min="0" max="24" value={theme.radius} onChange={(event) => onThemeChange((draft) => ({ ...draft, radius: Number(event.target.value), updatedAt: Date.now() }))}/><div className="range-ends"><span>Sharp</span><span>Soft</span></div></div><div className="control-group"><div className="control-label-row"><span>Density</span></div><div className="density-choices"><button type="button" className={theme.density === "comfortable" ? "is-selected" : ""} onClick={() => onThemeChange((draft) => ({ ...draft, density: "comfortable", updatedAt: Date.now() }))}><span className="density-icon density-icon--comfortable"><i/><i/><i/></span><b>Comfortable</b><small>More breathing room</small></button><button type="button" className={theme.density === "compact" ? "is-selected" : ""} onClick={() => onThemeChange((draft) => ({ ...draft, density: "compact", updatedAt: Date.now() }))}><span className="density-icon density-icon--compact"><i/><i/><i/></span><b>Compact</b><small>More on screen</small></button></div></div><div className="foundations-note"><span className="foundations-note__icon"><Layers3 size={14}/></span><div><b>Built on a token system</b><p>Color, spacing, radii, type, and component tokens stay linked as one design system.</p></div></div></div>}
-          {activeInspector === "tokens" && <div className="inspector-body token-explorer"><div className="inspector-subheading"><div><b>Token explorer</b><small>Core tokens · {exampleTokens.length} shown</small></div><button className="filter-small" type="button"><Filter size={13}/></button></div><div className="token-group-list"><button type="button" className={activeTokenGroup === "Colors" ? "is-open" : ""} onClick={() => setActiveTokenGroup(activeTokenGroup === "Colors" ? "" : "Colors")}><ChevronDown size={13}/> Colors <span>3</span></button>{activeTokenGroup === "Colors" && exampleTokens.slice(0, 3).map(([name, value, type]) => <div className="token-row" key={name}><span className="token-color-dot" style={{ background: value.startsWith("#") ? value : "transparent" }}/><span><b>{name}</b><small>{type}</small></span><code>{value}</code></div>)}<button type="button" className={activeTokenGroup === "Dimensions" ? "is-open" : ""} onClick={() => setActiveTokenGroup(activeTokenGroup === "Dimensions" ? "" : "Dimensions")}><ChevronDown size={13}/> Dimensions <span>2</span></button>{activeTokenGroup === "Dimensions" && exampleTokens.slice(3, 5).map(([name, value, type]) => <div className="token-row" key={name}><span className="token-dimension-icon">↔</span><span><b>{name}</b><small>{type}</small></span><code>{value}</code></div>)}<button type="button" className={activeTokenGroup === "Typography" ? "is-open" : ""} onClick={() => setActiveTokenGroup(activeTokenGroup === "Typography" ? "" : "Typography")}><ChevronDown size={13}/> Typography <span>1</span></button>{activeTokenGroup === "Typography" && exampleTokens.slice(5).map(([name, value, type]) => <div className="token-row" key={name}><span className="token-type-icon">Aa</span><span><b>{name}</b><small>{type}</small></span><code>{value}</code></div>)}</div><div className="token-footer"><span>Schema</span><b>openui-1.0</b><span className="schema-dot"/></div></div>}
+          {activeInspector === "style" && <div className="inspector-body"><div className="inspector-subheading"><div><b>Shape & density</b><small>Set the overall feel</small></div></div><div className="control-group"><div className="control-label-row"><label htmlFor="radius-range">Corner radius</label><span>{theme.radius} dp</span></div><input id="radius-range" className="range-control" type="range" min="0" max="24" value={theme.radius} onChange={(event) => onThemeChange((draft) => ({ ...draft, radius: Number(event.target.value), updatedAt: Date.now() }))}/><div className="range-ends"><span>Sharp</span><span>Soft</span></div></div><div className="control-group"><div className="control-label-row"><span>Density</span></div><div className="density-choices"><button type="button" className={theme.density === "comfortable" ? "is-selected" : ""} onClick={() => onThemeChange((draft) => ({ ...draft, density: "comfortable", updatedAt: Date.now() }))}><span className="density-icon density-icon--comfortable"><i/><i/><i/></span><b>Comfortable</b><small>More breathing room</small></button><button type="button" className={theme.density === "compact" ? "is-selected" : ""} onClick={() => onThemeChange((draft) => ({ ...draft, density: "compact", updatedAt: Date.now() }))}><span className="density-icon density-icon--compact"><i/><i/><i/></span><b>Compact</b><small>More on screen</small></button></div></div><div className="foundations-note"><span className="foundations-note__icon"><Layers3 size={14}/></span><div><b>Built on a token system</b><p>Palette, radius, and density update this template; typography and component-specific styling remain fixed.</p></div></div></div>}
+          {activeInspector === "tokens" && <div className="inspector-body token-explorer"><div className="inspector-subheading"><div><b>Token explorer</b><small>Example tokens · {exampleTokens.length} shown</small></div><button className="filter-small" type="button"><Filter size={13}/></button></div><div className="token-group-list"><button type="button" className={activeTokenGroup === "Colors" ? "is-open" : ""} onClick={() => setActiveTokenGroup(activeTokenGroup === "Colors" ? "" : "Colors")}><ChevronDown size={13}/> Colors <span>3</span></button>{activeTokenGroup === "Colors" && exampleTokens.slice(0, 3).map(([name, value, type]) => <div className="token-row" key={name}><span className="token-color-dot" style={{ background: value.startsWith("#") ? value : "transparent" }}/><span><b>{name}</b><small>{type}</small></span><code>{value}</code></div>)}<button type="button" className={activeTokenGroup === "Dimensions" ? "is-open" : ""} onClick={() => setActiveTokenGroup(activeTokenGroup === "Dimensions" ? "" : "Dimensions")}><ChevronDown size={13}/> Dimensions <span>2</span></button>{activeTokenGroup === "Dimensions" && exampleTokens.slice(3, 5).map(([name, value, type]) => <div className="token-row" key={name}><span className="token-dimension-icon">↔</span><span><b>{name}</b><small>{type}</small></span><code>{value}</code></div>)}<button type="button" className={activeTokenGroup === "Typography" ? "is-open" : ""} onClick={() => setActiveTokenGroup(activeTokenGroup === "Typography" ? "" : "Typography")}><ChevronDown size={13}/> Typography <span>1</span></button>{activeTokenGroup === "Typography" && exampleTokens.slice(5).map(([name, value, type]) => <div className="token-row" key={name}><span className="token-type-icon">Aa</span><span><b>{name}</b><small>{type}</small></span><code>{value}</code></div>)}</div><div className="token-footer"><span>Schema</span><b>openui-1.0</b><span className="schema-dot"/></div></div>}
           <div className="inspector-bottom"><button type="button" className="text-button" onClick={onExport}><Download size={14}/> Export this theme</button><span>Changes save to this browser</span></div>
         </section>
       </div>
-      {showLargePreview && <div className="modal-backdrop" onClick={() => setShowLargePreview(false)}><section className="preview-modal" role="dialog" aria-modal="true" aria-label="Sample website preview" onClick={(event) => event.stopPropagation()}><div className="preview-modal__head"><div><span className="section-kicker">LIVE TOKEN PREVIEW · {viewport.toUpperCase()}</span><h2>{theme.name}</h2><p>Changes in the editor are reflected here immediately.</p></div><IconButton label="Close preview" onClick={() => setShowLargePreview(false)}><X size={17}/></IconButton></div><div className="preview-modal__toolbar"><span>{mode === "light" ? "Light mode" : "Dark mode"} <span>·</span> {viewport} viewport</span><div className="mode-toggle" role="group" aria-label="Preview mode"><button type="button" className={mode === "light" ? "is-active" : ""} onClick={() => onModeChange("light")} aria-label="Light preview"><Sun size={13}/></button><button type="button" className={mode === "dark" ? "is-active" : ""} onClick={() => onModeChange("dark")} aria-label="Dark preview"><Moon size={13}/></button></div></div><div className="preview-modal__stage"><SampleWebsite theme={theme} mode={mode} viewport={viewport}/></div><div className="preview-modal__footer"><span>Built-in SaaS dashboard template · {viewport === "desktop" ? "1440 px" : viewport === "tablet" ? "768 px" : "390 px"}</span><button type="button" className="button button--subtle" onClick={() => setShowLargePreview(false)}>Close preview</button></div></section></div>}
+      {showLargePreview && <div className="modal-backdrop" onClick={() => setShowLargePreview(false)}><section className="preview-modal" role="dialog" aria-modal="true" aria-label="Sample website preview" onClick={(event) => event.stopPropagation()}><div className="preview-modal__head"><div><span className="section-kicker">{proposalPreviewActive ? "PROPOSAL PREVIEW · NOT APPLIED" : `LIVE TOKEN PREVIEW · ${viewport.toUpperCase()}`}</span><h2>{displayedPreviewTheme.name}</h2><p>{proposalPreviewActive ? "This temporary preview leaves your draft unchanged." : "Changes in the editor are reflected here immediately."}</p></div><IconButton label="Close preview" onClick={() => setShowLargePreview(false)}><X size={17}/></IconButton></div><div className="preview-modal__toolbar"><span>{mode === "light" ? "Light mode" : "Dark mode"} <span>·</span> {viewport} viewport</span><div className="mode-toggle" role="group" aria-label="Preview mode"><button type="button" className={mode === "light" ? "is-active" : ""} onClick={() => onModeChange("light")} aria-label="Light preview"><Sun size={13}/></button><button type="button" className={mode === "dark" ? "is-active" : ""} onClick={() => onModeChange("dark")} aria-label="Dark preview"><Moon size={13}/></button></div></div><div className="preview-modal__stage"><SampleWebsite theme={displayedPreviewTheme} mode={mode} viewport={viewport}/></div><div className="preview-modal__footer"><span>Built-in SaaS dashboard template · {viewport === "desktop" ? "1440 px" : viewport === "tablet" ? "768 px" : "390 px"}</span><button type="button" className="button button--subtle" onClick={() => setShowLargePreview(false)}>Close preview</button></div></section></div>}
     </div>
   );
 }

@@ -30,6 +30,12 @@ npm run build
 
 From Overview, choose **Chat with Forma**, or add a provider key in **Settings** and choose **Chat with Forma** there. This opens AI Studio and focuses the prompt box. Ask for a design change (for example, “make a calm palette for a wellness app”), then press **Send**. Forma shows a reviewable proposal; it does not change your draft until you choose **Apply changes**. Provider testing in Settings is optional.
 
+## Agent capability and preview boundary
+
+The current assistant is a constrained **design-token proposer**, not a website inspector or code-writing agent. Each request sends your prompt plus the active theme's name, description, light/dark color palettes, corner radius, and density. It does not receive your website URL, page markup, repository, screenshots, images, or raw imported source documents, and it cannot call arbitrary tools. Its validated patch can change the theme name/description, palette roles, radius, and density; it cannot author HTML/CSS, change a logo or assets, choose typefaces, or design a new page/component layout.
+
+Those supported tokens do shape the built-in SaaS dashboard's surfaces, text, accents, corner treatment, and density in light and dark modes. However, the sample website is a fixed Forma template, not your own website. The current editor/preview has no independently editable typography, component-specific variants/states, image/brand assets, or arbitrary layout tokens. Imports can preserve unknown source fields for export, but that does not make those fields editable by the assistant or rendered in the preview. Use exported tokens/CSS in your own website to apply the supported foundation there.
+
 ## AI provider privacy
 
 Provider/model settings and a custom provider base URL may be saved in this browser. **By default, the API key stays in page memory** and is cleared when you close or refresh the tab. Settings includes an optional “Remember provider key on this device” checkbox; opting in stores the key in this browser’s IndexedDB so it survives refreshes. This local copy is not encrypted by Forma, so do not enable it on shared devices. Uncheck the option or use Clear local data to delete it. Keys are not included in project exports or sent to Forma analytics/logs. When you test or use the assistant, Forma forwards the key with your prompt and current token draft to the provider you selected; review that provider's privacy and data-retention terms before sending sensitive material.
