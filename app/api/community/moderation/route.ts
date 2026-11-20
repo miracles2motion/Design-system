@@ -52,12 +52,19 @@ async function forwardToBackend(
     return { success: false, message: "Community backend is not configured." };
   }
 
-  const response = await fetch(`${COMMUNITY_API}/exec`, {
+  // Send the token in the query string — Apps Script's e.parameter.token
+  // reads query string params reliably. This works with the original
+  // isAuthorized function without requiring Apps Script code changes.
+  const queryString = new URLSearchParams({
+    token: AUTH_TOKEN,
+  }).toString();
+
+  const response = await fetch(`${COMMUNITY_API}/exec?${queryString}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ action, token: AUTH_TOKEN, ...payload }),
+    body: JSON.stringify({ action, ...payload }),
   });
 
   const responseBody = await response.json().catch(() => ({ success: false, message: "No response body" }));
