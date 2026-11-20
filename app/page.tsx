@@ -224,6 +224,47 @@ function AppIcon() {
   );
 }
 
+function useFocusTrap(open: boolean, containerRef: React.RefObject<HTMLElement | null>, onEscape?: () => void) {
+  useEffect(() => {
+    if (!open) return;
+    const container = containerRef.current;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusableSelector = "button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
+    const getFocusable = () => Array.from(container?.querySelectorAll<HTMLElement>(focusableSelector) ?? [])
+      .filter((element) => !element.hasAttribute("hidden") && element.getAttribute("aria-hidden") !== "true");
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onEscape?.();
+        return;
+      }
+      if (event.key !== "Tab" || !container) return;
+      const elements = getFocusable();
+      if (!elements.length) {
+        event.preventDefault();
+        container.focus();
+        return;
+      }
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === container)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    container?.focus();
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [open, containerRef, onEscape]);
+}
+
 function IconButton({
   label,
   onClick,
@@ -522,8 +563,18 @@ function StudioView({
   const [activeInspector, setActiveInspector] = useState<"colors" | "style" | "foundations" | "tokens">("colors");
   const [activeTokenGroup, setActiveTokenGroup] = useState("Colors");
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!exportMenuOpen) return;
+    const timer = window.setTimeout(() => {
+      const items = exportMenuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [];
+      items[0]?.focus();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [exportMenuOpen]);
   const [validationOpen, setValidationOpen] = useState(false);
   const validationDialogRef = useRef<HTMLElement | null>(null);
+  const largePreviewRef = useRef<HTMLElement | null>(null);
   const validationReport = useMemo(() => validateThemeExports(theme), [theme]);
   const validationErrors = validationReport.filter((issue) => issue.severity === "error");
   const validationWarnings = validationReport.filter((issue) => issue.severity === "warning");
@@ -532,44 +583,8 @@ function StudioView({
   const [pendingProposal, setPendingProposal] = useState<PendingProposal | null>(null);
   const [previewingProposal, setPreviewingProposal] = useState(false);
 
-  useEffect(() => {
-    if (!validationOpen) return;
-    const dialog = validationDialogRef.current;
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusableSelector = "button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
-    const getFocusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>(focusableSelector) ?? [])
-      .filter((element) => !element.hasAttribute("hidden") && element.getAttribute("aria-hidden") !== "true");
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setValidationOpen(false);
-        return;
-      }
-      if (event.key !== "Tab" || !dialog) return;
-      const elements = getFocusable();
-      if (!elements.length) {
-        event.preventDefault();
-        dialog.focus();
-        return;
-      }
-      const first = elements[0];
-      const last = elements[elements.length - 1];
-      if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog)) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-
-    dialog?.focus();
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      if (previousFocus?.isConnected) previousFocus.focus();
-    };
-  }, [validationOpen]);
+  useFocusTrap(validationOpen, validationDialogRef, () => setValidationOpen(false));
+  useFocusTrap(showLargePreview, largePreviewRef, () => setShowLargePreview(false));
 
   const applyPatch = (patch: ThemeProposalPatch) => {
     onThemeChange((draft) => ({ ...applyThemeProposal(draft, patch), updatedAt: Date.now() }));
@@ -667,13 +682,29 @@ function StudioView({
     <div className="page-stack studio-view">
       <div className="studio-heading">
         <div><div className="breadcrumb"><span>Workspace</span><ChevronRight size={13}/><span>Studio</span></div><div className="studio-title-row"><h1>{theme.name}</h1><span className="local-badge"><span/> Saved locally</span></div><p>Refine your tokens and see them applied to the sample website.</p></div>
-        <div className="studio-toolbar"><button className="button button--subtle button--small" type="button" onClick={onImport}><Upload size={14}/> Import</button><button className="button button--subtle button--small" type="button" onClick={onUndo} disabled={!canUndo}><ArrowDownToLine size={14}/> Undo</button><button className="button button--subtle button--small validation-trigger" type="button" aria-label={`Validate theme: ${validationErrors.length} errors, ${validationWarnings.length} warnings`} onClick={() => setValidationOpen(true)}><ShieldCheck size={14}/> Validate<span className={`validation-badge ${validationErrors.length ? "validation-badge--error" : validationWarnings.length ? "validation-badge--warning" : "validation-badge--ok"}`}>{validationErrors.length || validationWarnings.length || "✓"}</span></button><div className="export-actions"><button className="button button--primary button--small" type="button" onClick={onExportPair}><Download size={14}/> Export pair</button><button className="export-more" type="button" aria-label="More export formats" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen((open) => !open)}><ChevronDown size={14}/></button>{exportMenuOpen && <div className="export-menu" role="menu"><button type="button" role="menuitem" onClick={() => { onExport(); setExportMenuOpen(false); }}><FileText size={13}/> OpenUI 1.0 JSON</button><button type="button" role="menuitem" onClick={() => { onExportFoundations(); setExportMenuOpen(false); }}><Layers3 size={13}/> Foundations draft JSON</button><button type="button" role="menuitem" onClick={() => { onDownloadCss(); setExportMenuOpen(false); }}><Download size={13}/> CSS variables</button></div>}</div></div>
+        <div className="studio-toolbar"><button className="button button--subtle button--small" type="button" onClick={onImport}><Upload size={14}/> Import</button><button className="button button--subtle button--small" type="button" onClick={onUndo} disabled={!canUndo}><ArrowDownToLine size={14}/> Undo</button><button className="button button--subtle button--small validation-trigger" type="button" aria-label={`Validate theme: ${validationErrors.length} errors, ${validationWarnings.length} warnings`} onClick={() => setValidationOpen(true)}><ShieldCheck size={14}/> Validate<span className={`validation-badge ${validationErrors.length ? "validation-badge--error" : validationWarnings.length ? "validation-badge--warning" : "validation-badge--ok"}`}>{validationErrors.length || validationWarnings.length || "✓"}</span></button><div className="export-actions"><button className="button button--primary button--small" type="button" onClick={onExportPair}><Download size={14}/> Export pair</button><button className="export-more" type="button" aria-label="More export formats" aria-haspopup="menu" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen((open) => !open)}><ChevronDown size={14}/></button>{exportMenuOpen && <div className="export-menu" ref={exportMenuRef} role="menu" onKeyDown={(event) => {
+            const items = Array.from(exportMenuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+            const currentIndex = items.indexOf(document.activeElement as HTMLElement);
+            if (event.key === "Escape") {
+              event.preventDefault();
+              setExportMenuOpen(false);
+              return;
+            }
+            if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Home" && event.key !== "End") return;
+            event.preventDefault();
+            if (event.key === "Home") { items[0]?.focus(); return; }
+            if (event.key === "End") { items[items.length - 1]?.focus(); return; }
+            const nextIndex = event.key === "ArrowDown"
+              ? (currentIndex + 1) % items.length
+              : (currentIndex - 1 + items.length) % items.length;
+            items[nextIndex]?.focus();
+          }}><button type="button" role="menuitem" onClick={() => { onExport(); setExportMenuOpen(false); }}><FileText size={13}/> OpenUI 1.0 JSON</button><button type="button" role="menuitem" onClick={() => { onExportFoundations(); setExportMenuOpen(false); }}><Layers3 size={13}/> Foundations draft JSON</button><button type="button" role="menuitem" onClick={() => { onDownloadCss(); setExportMenuOpen(false); }}><Download size={13}/> CSS variables</button></div>}</div></div>
       </div>
       <div className="studio-grid">
         <section className="assistant-panel panel">
           <div className="panel-header"><div className="panel-title"><span className="panel-icon panel-icon--purple"><Sparkles size={16}/></span><div><h2>Design assistant</h2><small>Token proposals · color, type, spacing & shape</small></div></div><button className="more-button" type="button" aria-label="More assistant options"><MoreHorizontal size={17}/></button></div>
           <div className="assistant-context"><span className="assistant-context__avatar"><Sparkles size={14}/></span><div><b>Working on {theme.name}</b><small>{apiKey ? `Key ready · ${PROVIDERS.find((item) => item.id === provider)?.name ?? provider}` : "Add a provider key in Settings"}</small></div><button type="button" onClick={onGoSettings} aria-label="Provider settings"><Settings size={14}/></button></div>
-          <div className="chat-thread">
+          <div className="chat-thread" role="log" aria-live="polite" aria-label="Assistant conversation">
             {messages.map((message) => <div className={`chat-message chat-message--${message.role}`} key={message.id}>{message.role === "assistant" && <span className="chat-avatar"><Sparkles size={13}/></span>}<div className="chat-message__bubble">{message.text}</div></div>)}
             {isGenerating && <div className="chat-message chat-message--assistant"><span className="chat-avatar"><Sparkles size={13}/></span><div className="chat-message__bubble typing"><i/><i/><i/> Building a token proposal…</div></div>}
           </div>
@@ -713,10 +744,19 @@ function StudioView({
 
         <section className="inspector-panel panel">
           <div className="panel-header"><div className="panel-title"><span className="panel-icon panel-icon--amber"><SlidersHorizontal size={15}/></span><div><h2>Theme controls</h2><small>Adjust your foundation</small></div></div><button className="more-button" type="button" aria-label="More theme controls"><MoreHorizontal size={17}/></button></div>
-          <div className="inspector-tabs" role="tablist"><button type="button" role="tab" className={activeInspector === "colors" ? "is-active" : ""} onClick={() => setActiveInspector("colors")}>Colors</button><button type="button" role="tab" className={activeInspector === "style" ? "is-active" : ""} onClick={() => setActiveInspector("style")}>Style</button><button type="button" role="tab" className={activeInspector === "foundations" ? "is-active" : ""} onClick={() => setActiveInspector("foundations")}>Type + space</button><button type="button" role="tab" className={activeInspector === "tokens" ? "is-active" : ""} onClick={() => setActiveInspector("tokens")}>Tokens</button></div>
-          {activeInspector === "colors" && <div className="inspector-body"><div className="inspector-subheading"><div><b>{mode === "light" ? "Light palette" : "Dark palette"}</b><small>Editing {mode} mode</small></div><span className="color-pair-count">7 roles</span></div><div className="color-fields">{COLOR_FIELDS.map((field) => <ColorInput key={field.key} label={field.label} description={field.description} value={palette[field.key]} onChange={(value) => onThemeChange((draft) => ({ ...draft, [mode]: { ...draft[mode], [field.key]: value }, updatedAt: Date.now() }))}/>)}</div><button className="mode-switch-link" type="button" onClick={() => onModeChange(mode === "light" ? "dark" : "light")}>Edit {mode === "light" ? "dark" : "light"} palette <ArrowRight size={13}/></button><div className={`contrast-card ${accessibilityPass ? "contrast-card--pass" : "contrast-card--warn"}`}><span className="contrast-card__icon"><ShieldCheck size={15}/></span><div><b>{accessibilityPass ? "Text contrast looks good" : "Check text contrast"}</b><small>{contrast ? `${contrast}:1 · body text on canvas` : "Contrast could not be measured"}</small></div><span className="contrast-badge">{accessibilityPass ? "AA" : "REVIEW"}</span></div></div>}
-          {activeInspector === "style" && <div className="inspector-body"><div className="inspector-subheading"><div><b>Shape & density</b><small>Set the overall feel</small></div></div><div className="control-group"><div className="control-label-row"><label htmlFor="radius-range">Corner radius</label><span>{theme.radius} dp</span></div><input id="radius-range" className="range-control" type="range" min="0" max="24" value={theme.radius} onChange={(event) => onThemeChange((draft) => ({ ...draft, radius: Number(event.target.value), updatedAt: Date.now() }))}/><div className="range-ends"><span>Sharp</span><span>Soft</span></div></div><div className="control-group"><div className="control-label-row"><span>Density</span></div><div className="density-choices"><button type="button" className={theme.density === "comfortable" ? "is-selected" : ""} onClick={() => onThemeChange((draft) => ({ ...draft, density: "comfortable", spacing: spacingForDensity("comfortable"), updatedAt: Date.now() }))}><span className="density-icon density-icon--comfortable"><i/><i/><i/></span><b>Comfortable</b><small>More breathing room</small></button><button type="button" className={theme.density === "compact" ? "is-selected" : ""} onClick={() => onThemeChange((draft) => ({ ...draft, density: "compact", spacing: spacingForDensity("compact"), updatedAt: Date.now() }))}><span className="density-icon density-icon--compact"><i/><i/><i/></span><b>Compact</b><small>More on screen</small></button></div></div><div className="foundations-note"><span className="foundations-note__icon"><Layers3 size={14}/></span><div><b>Built on a token system</b><p>Palette, typography, shape, and spacing update this template live.</p></div></div></div>}
-          {activeInspector === "foundations" && <div className="inspector-body foundation-controls">
+          <div className="inspector-tabs" role="tablist" aria-label="Theme controls" onKeyDown={(event) => {
+            if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+            event.preventDefault();
+            const tabs = ["colors", "style", "foundations", "tokens"] as const;
+            const currentIndex = tabs.indexOf(activeInspector);
+            const nextIndex = event.key === "ArrowRight"
+              ? (currentIndex + 1) % tabs.length
+              : (currentIndex - 1 + tabs.length) % tabs.length;
+            setActiveInspector(tabs[nextIndex]);
+          }}><button type="button" role="tab" id="theme-tab-colors" aria-controls="theme-panel-colors" aria-selected={activeInspector === "colors"} tabIndex={activeInspector === "colors" ? 0 : -1} className={activeInspector === "colors" ? "is-active" : ""} onClick={() => setActiveInspector("colors")}>Colors</button><button type="button" role="tab" id="theme-tab-style" aria-controls="theme-panel-style" aria-selected={activeInspector === "style"} tabIndex={activeInspector === "style" ? 0 : -1} className={activeInspector === "style" ? "is-active" : ""} onClick={() => setActiveInspector("style")}>Style</button><button type="button" role="tab" id="theme-tab-foundations" aria-controls="theme-panel-foundations" aria-selected={activeInspector === "foundations"} tabIndex={activeInspector === "foundations" ? 0 : -1} className={activeInspector === "foundations" ? "is-active" : ""} onClick={() => setActiveInspector("foundations")}>Type + space</button><button type="button" role="tab" id="theme-tab-tokens" aria-controls="theme-panel-tokens" aria-selected={activeInspector === "tokens"} tabIndex={activeInspector === "tokens" ? 0 : -1} className={activeInspector === "tokens" ? "is-active" : ""} onClick={() => setActiveInspector("tokens")}>Tokens</button></div>
+          {activeInspector === "colors" && <div className="inspector-body" role="tabpanel" id="theme-panel-colors" aria-labelledby="theme-tab-colors" tabIndex={0}><div className="inspector-subheading"><div><b>{mode === "light" ? "Light palette" : "Dark palette"}</b><small>Editing {mode} mode</small></div><span className="color-pair-count">7 roles</span></div><div className="color-fields">{COLOR_FIELDS.map((field) => <ColorInput key={field.key} label={field.label} description={field.description} value={palette[field.key]} onChange={(value) => onThemeChange((draft) => ({ ...draft, [mode]: { ...draft[mode], [field.key]: value }, updatedAt: Date.now() }))}/>)}</div><button className="mode-switch-link" type="button" onClick={() => onModeChange(mode === "light" ? "dark" : "light")}>Edit {mode === "light" ? "dark" : "light"} palette <ArrowRight size={13}/></button><div className={`contrast-card ${accessibilityPass ? "contrast-card--pass" : "contrast-card--warn"}`}><span className="contrast-card__icon"><ShieldCheck size={15}/></span><div><b>{accessibilityPass ? "Text contrast looks good" : "Check text contrast"}</b><small>{contrast ? `${contrast}:1 · body text on canvas` : "Contrast could not be measured"}</small></div><span className="contrast-badge">{accessibilityPass ? "AA" : "REVIEW"}</span></div></div>}
+          {activeInspector === "style" && <div className="inspector-body" role="tabpanel" id="theme-panel-style" aria-labelledby="theme-tab-style" tabIndex={0}><div className="inspector-subheading"><div><b>Shape & density</b><small>Set the overall feel</small></div></div><div className="control-group"><div className="control-label-row"><label htmlFor="radius-range">Corner radius</label><span>{theme.radius} dp</span></div><input id="radius-range" className="range-control" type="range" min="0" max="24" value={theme.radius} onChange={(event) => onThemeChange((draft) => ({ ...draft, radius: Number(event.target.value), updatedAt: Date.now() }))}/><div className="range-ends"><span>Sharp</span><span>Soft</span></div></div><div className="control-group"><div className="control-label-row"><span>Density</span></div><div className="density-choices"><button type="button" className={theme.density === "comfortable" ? "is-selected" : ""} onClick={() => onThemeChange((draft) => ({ ...draft, density: "comfortable", spacing: spacingForDensity("comfortable"), updatedAt: Date.now() }))}><span className="density-icon density-icon--comfortable"><i/><i/><i/></span><b>Comfortable</b><small>More breathing room</small></button><button type="button" className={theme.density === "compact" ? "is-selected" : ""} onClick={() => onThemeChange((draft) => ({ ...draft, density: "compact", spacing: spacingForDensity("compact"), updatedAt: Date.now() }))}><span className="density-icon density-icon--compact"><i/><i/><i/></span><b>Compact</b><small>More on screen</small></button></div></div><div className="foundations-note"><span className="foundations-note__icon"><Layers3 size={14}/></span><div><b>Built on a token system</b><p>Palette, typography, shape, and spacing update this template live.</p></div></div></div>}
+          {activeInspector === "foundations" && <div className="inspector-body foundation-controls" role="tabpanel" id="theme-panel-foundations" aria-labelledby="theme-tab-foundations" tabIndex={0}>
             <div className="inspector-subheading"><div><b>Typography & spacing</b><small>Fine-tune the foundation tokens</small></div></div>
             <section className="foundation-control-card">
               <div className="foundation-control-card__heading"><b>Typography</b><small>Type scales update the preview</small></div>
@@ -737,11 +777,11 @@ function StudioView({
             </section>
             <div className="foundations-note"><span className="foundations-note__icon"><Layers3 size={14}/></span><div><b>Saved as foundation tokens</b><p>Typography and spacing are included in OpenUI, foundations, and CSS exports.</p></div></div>
           </div>}
-          {activeInspector === "tokens" && <div className="inspector-body token-explorer"><div className="inspector-subheading"><div><b>Token explorer</b><small>Example tokens · {exampleTokens.length} shown</small></div><button className="filter-small" type="button"><Filter size={13}/></button></div><div className="token-group-list"><button type="button" className={activeTokenGroup === "Colors" ? "is-open" : ""} onClick={() => setActiveTokenGroup(activeTokenGroup === "Colors" ? "" : "Colors")}><ChevronDown size={13}/> Colors <span>3</span></button>{activeTokenGroup === "Colors" && exampleTokens.slice(0, 3).map(([name, value, type]) => <div className="token-row" key={name}><span className="token-color-dot" style={{ background: value.startsWith("#") ? value : "transparent" }}/><span><b>{name}</b><small>{type}</small></span><code>{value}</code></div>)}<button type="button" className={activeTokenGroup === "Dimensions" ? "is-open" : ""} onClick={() => setActiveTokenGroup(activeTokenGroup === "Dimensions" ? "" : "Dimensions")}><ChevronDown size={13}/> Dimensions <span>6</span></button>{activeTokenGroup === "Dimensions" && exampleTokens.slice(3, 9).map(([name, value, type]) => <div className="token-row" key={name}><span className="token-dimension-icon">↔</span><span><b>{name}</b><small>{type}</small></span><code>{value}</code></div>)}<button type="button" className={activeTokenGroup === "Typography" ? "is-open" : ""} onClick={() => setActiveTokenGroup(activeTokenGroup === "Typography" ? "" : "Typography")}><ChevronDown size={13}/> Typography <span>4</span></button>{activeTokenGroup === "Typography" && exampleTokens.slice(9).map(([name, value, type]) => <div className="token-row" key={name}><span className="token-type-icon">Aa</span><span><b>{name}</b><small>{type}</small></span><code>{value}</code></div>)}</div><div className="token-footer"><span>Schema</span><b>openui-1.0</b><span className="schema-dot"/></div></div>}
+          {activeInspector === "tokens" && <div className="inspector-body token-explorer" role="tabpanel" id="theme-panel-tokens" aria-labelledby="theme-tab-tokens" tabIndex={0}><div className="inspector-subheading"><div><b>Token explorer</b><small>Example tokens · {exampleTokens.length} shown</small></div><button className="filter-small" type="button"><Filter size={13}/></button></div><div className="token-group-list"><button type="button" className={activeTokenGroup === "Colors" ? "is-open" : ""} onClick={() => setActiveTokenGroup(activeTokenGroup === "Colors" ? "" : "Colors")}><ChevronDown size={13}/> Colors <span>3</span></button>{activeTokenGroup === "Colors" && exampleTokens.slice(0, 3).map(([name, value, type]) => <div className="token-row" key={name}><span className="token-color-dot" style={{ background: value.startsWith("#") ? value : "transparent" }}/><span><b>{name}</b><small>{type}</small></span><code>{value}</code></div>)}<button type="button" className={activeTokenGroup === "Dimensions" ? "is-open" : ""} onClick={() => setActiveTokenGroup(activeTokenGroup === "Dimensions" ? "" : "Dimensions")}><ChevronDown size={13}/> Dimensions <span>6</span></button>{activeTokenGroup === "Dimensions" && exampleTokens.slice(3, 9).map(([name, value, type]) => <div className="token-row" key={name}><span className="token-dimension-icon">↔</span><span><b>{name}</b><small>{type}</small></span><code>{value}</code></div>)}<button type="button" className={activeTokenGroup === "Typography" ? "is-open" : ""} onClick={() => setActiveTokenGroup(activeTokenGroup === "Typography" ? "" : "Typography")}><ChevronDown size={13}/> Typography <span>4</span></button>{activeTokenGroup === "Typography" && exampleTokens.slice(9).map(([name, value, type]) => <div className="token-row" key={name}><span className="token-type-icon">Aa</span><span><b>{name}</b><small>{type}</small></span><code>{value}</code></div>)}</div><div className="token-footer"><span>Schema</span><b>openui-1.0</b><span className="schema-dot"/></div></div>}
           <div className="inspector-bottom"><button type="button" className="text-button" onClick={onExport}><Download size={14}/> Export this theme</button><span>Changes save to this browser</span></div>
         </section>
       </div>
-      {showLargePreview && <div className="modal-backdrop" onClick={() => setShowLargePreview(false)}><section className="preview-modal" role="dialog" aria-modal="true" aria-label="Sample website preview" onClick={(event) => event.stopPropagation()}><div className="preview-modal__head"><div><span className="section-kicker">{proposalPreviewActive ? "PROPOSAL PREVIEW · NOT APPLIED" : `LIVE TOKEN PREVIEW · ${viewport.toUpperCase()}`}</span><h2>{displayedPreviewTheme.name}</h2><p>{proposalPreviewActive ? "This temporary preview leaves your draft unchanged." : "Changes in the editor are reflected here immediately."}</p></div><IconButton label="Close preview" onClick={() => setShowLargePreview(false)}><X size={17}/></IconButton></div><div className="preview-modal__toolbar"><span>{mode === "light" ? "Light mode" : "Dark mode"} <span>·</span> {viewport} viewport</span><div className="mode-toggle" role="group" aria-label="Preview mode"><button type="button" className={mode === "light" ? "is-active" : ""} onClick={() => onModeChange("light")} aria-label="Light preview"><Sun size={13}/></button><button type="button" className={mode === "dark" ? "is-active" : ""} onClick={() => onModeChange("dark")} aria-label="Dark preview"><Moon size={13}/></button></div></div><div className="preview-modal__stage"><SampleWebsite theme={displayedPreviewTheme} mode={mode} viewport={viewport}/></div><div className="preview-modal__footer"><span>Built-in dashboard template · {viewport === "desktop" ? "1440 px" : viewport === "tablet" ? "768 px" : "390 px"}</span><button type="button" className="button button--subtle" onClick={() => setShowLargePreview(false)}>Close preview</button></div></section></div>}
+      {showLargePreview && <div className="modal-backdrop" onClick={() => setShowLargePreview(false)}><section ref={largePreviewRef} tabIndex={-1} className="preview-modal" role="dialog" aria-modal="true" aria-label="Sample website preview" onClick={(event) => event.stopPropagation()}><div className="preview-modal__head"><div><span className="section-kicker">{proposalPreviewActive ? "PROPOSAL PREVIEW · NOT APPLIED" : `LIVE TOKEN PREVIEW · ${viewport.toUpperCase()}`}</span><h2>{displayedPreviewTheme.name}</h2><p>{proposalPreviewActive ? "This temporary preview leaves your draft unchanged." : "Changes in the editor are reflected here immediately."}</p></div><IconButton label="Close preview" onClick={() => setShowLargePreview(false)}><X size={17}/></IconButton></div><div className="preview-modal__toolbar"><span>{mode === "light" ? "Light mode" : "Dark mode"} <span>·</span> {viewport} viewport</span><div className="mode-toggle" role="group" aria-label="Preview mode"><button type="button" className={mode === "light" ? "is-active" : ""} onClick={() => onModeChange("light")} aria-label="Light preview"><Sun size={13}/></button><button type="button" className={mode === "dark" ? "is-active" : ""} onClick={() => onModeChange("dark")} aria-label="Dark preview"><Moon size={13}/></button></div></div><div className="preview-modal__stage"><SampleWebsite theme={displayedPreviewTheme} mode={mode} viewport={viewport}/></div><div className="preview-modal__footer"><span>Built-in dashboard template · {viewport === "desktop" ? "1440 px" : viewport === "tablet" ? "768 px" : "390 px"}</span><button type="button" className="button button--subtle" onClick={() => setShowLargePreview(false)}>Close preview</button></div></section></div>}
       {validationOpen && <div className="modal-backdrop" onClick={() => setValidationOpen(false)}><section ref={validationDialogRef} tabIndex={-1} className="validation-dialog" role="dialog" aria-modal="true" aria-label="Theme validation report" onClick={(event) => event.stopPropagation()}>
         <div className="validation-dialog__head"><div><span className="section-kicker">EXPORT PRE-CHECK</span><h2>Theme diagnostics</h2><p>Checks imported and generated OpenUI and foundations documents, pair filenames, supported ranges, and contrast.</p></div><IconButton label="Close validation report" onClick={() => setValidationOpen(false)}><X size={16}/></IconButton></div>
         <div className="validation-summary"><div className={validationErrors.length ? "validation-summary__item validation-summary__item--error" : "validation-summary__item validation-summary__item--ok"}><b>{validationErrors.length}</b><span>Errors</span></div><div className={validationWarnings.length ? "validation-summary__item validation-summary__item--warning" : "validation-summary__item validation-summary__item--ok"}><b>{validationWarnings.length}</b><span>Warnings</span></div><p>{validationErrors.length ? "Address errors before sharing these generated contracts." : validationWarnings.length ? "No blocking errors. Review these advisory warnings; they do not prevent export." : "No validation issues found. The generated contracts are ready to export."}</p></div>
@@ -901,6 +941,8 @@ export default function HomePage() {
   const [isLoaded, setIsLoaded] = useState(false);
   const [toast, setToast] = useState("");
   const [previewItem, setPreviewItem] = useState<StarterDesign | null>(null);
+  const previewItemRef = useRef<HTMLElement | null>(null);
+  const communityInfoRef = useRef<HTMLElement | null>(null);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [importInputKey, setImportInputKey] = useState(0);
   const [showCommunityInfo, setShowCommunityInfo] = useState(false);
@@ -1015,6 +1057,9 @@ export default function HomePage() {
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
   }, []);
+
+  useFocusTrap(Boolean(previewItem), previewItemRef, () => setPreviewItem(null));
+  useFocusTrap(showCommunityInfo, communityInfoRef, () => setShowCommunityInfo(false));
 
   useEffect(() => {
     const create = () => createNewSystem();
@@ -1281,6 +1326,7 @@ export default function HomePage() {
 
   return (
     <div className={`app-shell ${appMode === "dark" ? "app-shell--dark" : ""}`}>
+      <a className="skip-link" href="#main-content" onClick={(event) => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>Skip to main content</a>
       <input key={importInputKey} ref={fileInputRef} type="file" accept="application/json,.json" multiple className="visually-hidden" onChange={(event) => importJson(event.target.files ?? undefined)}/>
       <button className="mobile-menu-toggle" type="button" aria-label="Open navigation" onClick={() => setMobileMenu((open) => !open)}><Menu size={20}/></button>
       {mobileMenu && <button className="mobile-backdrop" aria-label="Close navigation" onClick={() => setMobileMenu(false)}/>}
@@ -1292,13 +1338,13 @@ export default function HomePage() {
         <div className="sidebar-group sidebar-group--manage"><span className="sidebar-label">PREFERENCES</span>{navItems.filter((item) => item.section === "manage").map((item) => <button type="button" key={item.id} className={`nav-link ${view === item.id ? "is-active" : ""}`} onClick={() => onNav(item.id)}>{item.icon}<span>{item.label}</span></button>)}</div>
         <div className="sidebar-bottom"><div className="sidebar-storage"><span className="storage-icon"><ShieldCheck size={15}/></span><div><b>Private by default</b><small>Saved on this device</small></div><span className="storage-online-dot"/></div><button className="sidebar-profile" type="button" onClick={() => onNav("settings")}><span className="profile-avatar">Y</span><span><b>You</b><small>Local workspace</small></span><MoreHorizontal size={17}/></button></div>
       </aside>
-      <main className="main-area">
+      <main id="main-content" tabIndex={-1} className="main-area">
         <header className="topbar"><div className="topbar__left"><span className="topbar-product">FORMA</span><ChevronRight size={13}/><span className="topbar-current">{activeNav?.label ?? "Workspace"}</span>{view === "studio" && <><ChevronRight size={13}/><span className="topbar-project">{theme.name}</span></>}</div><div className="topbar__right"><button className="command-search" type="button" onClick={() => { onNav("marketplace"); setTimeout(() => document.querySelector<HTMLInputElement>(".search-field input")?.focus(), 80); }}><Search size={14}/><span>Search designs</span><kbd>⌘ K</kbd></button><button className="topbar-icon" type="button" aria-label="Help" onClick={() => notify("Help: start from a preset, prompt, or imported JSON.")}><CircleHelp size={17}/></button><span className="topbar-divider"/><button className="theme-toggle" type="button" onClick={() => setAppMode((current) => current === "light" ? "dark" : "light")} aria-label={appMode === "light" ? "Switch app to dark mode" : "Switch app to light mode"}>{appMode === "light" ? <Moon size={16}/> : <Sun size={16}/>}</button><button className="topbar-account" type="button" onClick={() => onNav("settings")}><span className="profile-avatar profile-avatar--small">Y</span></button></div></header>
         <div className="main-scroll"><div className="page-container">{main}<footer className="page-footer"><span>FORMA <span>·</span> DESIGN SYSTEM STUDIO</span><span><span className="footer-private-dot"/> Drafts stay on this device</span></footer></div></div>
       </main>
       {toast && <div className="toast-message" role="status"><span className="toast-message__icon"><Check size={14}/></span>{toast}<button type="button" aria-label="Dismiss notification" onClick={() => setToast("")}><X size={14}/></button></div>}
-      {previewItem && <div className="modal-backdrop" onClick={() => setPreviewItem(null)}><section className="preview-modal" role="dialog" aria-modal="true" aria-label={`Preview ${previewItem.title}`} onClick={(event) => event.stopPropagation()}><div className="preview-modal__head"><div><span className="section-kicker">STARTER PREVIEW · {previewItem.collection.toUpperCase()}</span><h2>{previewItem.title}</h2><p>{previewItem.description}</p></div><IconButton label="Close preview" onClick={() => setPreviewItem(null)}><X size={17}/></IconButton></div><div className="preview-modal__toolbar"><span>{previewItem.tokenCount} tokens <span>·</span> Light + dark</span><div className="preview-modal__swatches">{[previewItem.theme.light.accent, previewItem.theme.light.secondary, previewItem.theme.light.background, previewItem.theme.light.text].map((color) => <i key={color} style={{ background: color }}/>)}</div></div><div className="preview-modal__stage"><SampleWebsite theme={previewItem.theme} mode={previewMode}/></div><div className="preview-modal__footer"><span>Preview uses the built-in sample website.</span><button className="button button--primary" type="button" onClick={() => applyStarter(previewItem)}>Use this design <ArrowRight size={14}/></button></div></section></div>}
-      {showCommunityInfo && <div className="modal-backdrop" onClick={() => setShowCommunityInfo(false)}><section className="small-modal" role="dialog" aria-modal="true" aria-label="Community marketplace details" onClick={(event) => event.stopPropagation()}><button type="button" className="small-modal__close" aria-label="Close" onClick={() => setShowCommunityInfo(false)}><X size={17}/></button><span className="small-modal__icon"><Layers3 size={19}/></span><span className="section-kicker">COMMUNITY MARKETPLACE</span><h2>Shared designs, with permission.</h2><p>The first build keeps personal projects in your browser and shows a curated starter library. Community designs will be added only after there’s a moderated way to submit and publish them—nothing is shared automatically.</p><div className="small-modal__note"><ShieldCheck size={15}/> Public designs only. Never API keys, prompts, or private drafts.</div><button type="button" className="button button--primary" onClick={() => { setShowCommunityInfo(false); onNav("marketplace"); }}>Explore starter designs <ArrowRight size={14}/></button></section></div>}
+      {previewItem && <div className="modal-backdrop" onClick={() => setPreviewItem(null)}><section ref={previewItemRef} tabIndex={-1} className="preview-modal" role="dialog" aria-modal="true" aria-label={`Preview ${previewItem.title}`} onClick={(event) => event.stopPropagation()}><div className="preview-modal__head"><div><span className="section-kicker">STARTER PREVIEW · {previewItem.collection.toUpperCase()}</span><h2>{previewItem.title}</h2><p>{previewItem.description}</p></div><IconButton label="Close preview" onClick={() => setPreviewItem(null)}><X size={17}/></IconButton></div><div className="preview-modal__toolbar"><span>{previewItem.tokenCount} tokens <span>·</span> Light + dark</span><div className="preview-modal__swatches">{[previewItem.theme.light.accent, previewItem.theme.light.secondary, previewItem.theme.light.background, previewItem.theme.light.text].map((color) => <i key={color} style={{ background: color }}/>)}</div></div><div className="preview-modal__stage"><SampleWebsite theme={previewItem.theme} mode={previewMode}/></div><div className="preview-modal__footer"><span>Preview uses the built-in sample website.</span><button className="button button--primary" type="button" onClick={() => applyStarter(previewItem)}>Use this design <ArrowRight size={14}/></button></div></section></div>}
+      {showCommunityInfo && <div className="modal-backdrop" onClick={() => setShowCommunityInfo(false)}><section ref={communityInfoRef} tabIndex={-1} className="small-modal" role="dialog" aria-modal="true" aria-label="Community marketplace details" onClick={(event) => event.stopPropagation()}><button type="button" className="small-modal__close" aria-label="Close" onClick={() => setShowCommunityInfo(false)}><X size={17}/></button><span className="small-modal__icon"><Layers3 size={19}/></span><span className="section-kicker">COMMUNITY MARKETPLACE</span><h2>Shared designs, with permission.</h2><p>The first build keeps personal projects in your browser and shows a curated starter library. Community designs will be added only after there’s a moderated way to submit and publish them—nothing is shared automatically.</p><div className="small-modal__note"><ShieldCheck size={15}/> Public designs only. Never API keys, prompts, or private drafts.</div><button type="button" className="button button--primary" onClick={() => { setShowCommunityInfo(false); onNav("marketplace"); }}>Explore starter designs <ArrowRight size={14}/></button></section></div>}
       {!isLoaded && <div className="loading-scrim"><span className="loading-mark"><AppIcon/></span><span>Opening your workspace…</span></div>}
     </div>
   );

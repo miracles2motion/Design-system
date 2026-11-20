@@ -262,3 +262,75 @@ test("keeps the assistant usable without credentials and makes no provider reque
   await expect(page.locator(".chat-message--assistant").last()).toContainText("Your request is ready");
   expect(providerRequests).toBe(0);
 });
+
+test("skip link moves focus to the main content area", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".loading-scrim")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Skip to main content" })).toBeVisible();
+  await page.getByRole("link", { name: "Skip to main content" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#main-content")).toBeFocused();
+});
+
+test("navigates inspector tabs with arrow keys and announces selection", async ({ page }) => {
+  await openStudio(page);
+  const tabColors = page.getByRole("tab", { name: "Colors" });
+  await expect(tabColors).toHaveAttribute("aria-selected", "true");
+
+  await tabColors.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("tab", { name: "Style" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Colors" })).toHaveAttribute("aria-selected", "false");
+  await expect(page.getByRole("tabpanel", { name: "Style" })).toContainText("Shape & density");
+
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("tab", { name: "Type + space" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tabpanel", { name: "Type + space" })).toContainText("Typography");
+
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.getByRole("tab", { name: "Style" })).toHaveAttribute("aria-selected", "true");
+});
+
+test("navigates the export menu with keyboard and closes on Escape", async ({ page }) => {
+  await openStudio(page);
+  const trigger = page.getByRole("button", { name: "More export formats" });
+  await trigger.click();
+  await expect(page.getByRole("menuitem", { name: "OpenUI 1.0 JSON" })).toBeVisible();
+
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByRole("menuitem", { name: "Foundations draft JSON" })).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByRole("menuitem", { name: "CSS variables" })).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(page.getByRole("menuitem", { name: "Foundations draft JSON" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menuitem", { name: "Foundations draft JSON" })).toBeHidden();
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+});
+
+test("traps focus inside the large preview dialog and restores it on close", async ({ page }) => {
+  await openStudio(page);
+  await page.getByRole("button", { name: "Open preview in larger view" }).click();
+  const dialog = page.getByRole("dialog", { name: "Sample website preview" });
+  await expect(dialog).toBeFocused();
+
+  // Shift+Tab from the dialog container wraps to the last focusable element
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.locator(".preview-modal__footer button")).toBeFocused();
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole("button", { name: "Open preview in larger view" })).toBeFocused();
+});
+
+test("announces assistant messages through a polite live region", async ({ page }) => {
+  await openStudio(page);
+  const log = page.getByRole("log", { name: "Assistant conversation" });
+  await expect(log).toBeVisible();
+
+  await page.getByRole("textbox", { name: "Describe a design change" }).fill("Make the dashboard feel warmer.");
+  await page.getByRole("button", { name: "Send prompt" }).click();
+
+  await expect(log).toContainText("Your request is ready");
+  await expect(page.getByRole("status")).toContainText("Add a provider key to generate with the assistant");
+});

@@ -6,13 +6,24 @@ import {
 } from "@playwright/test";
 import bundledChromium from "@sparticuz/chromium";
 import { tmpdir } from "node:os";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 export const test = base.extend<{ browser: Browser }>({
   browser: async ({}, use) => {
     const installedBrowser = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
     const executablePath = installedBrowser ?? await bundledChromium.executablePath();
-    const runtimeLibraries = join(tmpdir(), "al2023", "lib");
+    // NSS/nspr libraries are not present on this host; cached in the repo
+    // under .cache/nss-libs so they survive sandbox /tmp resets.
+    let runtimeLibraries = join(
+      process.cwd(),
+      ".cache",
+      "nss-libs",
+    );
+    if (!existsSync(runtimeLibraries)) {
+      const fallback = join(tmpdir(), "nss-libs");
+      if (existsSync(fallback)) runtimeLibraries = fallback;
+    }
     const environment = process.platform === "linux" && !installedBrowser
       ? {
         ...process.env,
