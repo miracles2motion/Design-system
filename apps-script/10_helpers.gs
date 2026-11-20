@@ -44,28 +44,43 @@ function isAuthorized(e) {
     return false;
   }
   var provided = "";
+  var debugInfo = [];
 
   // 1. Check the POST body JSON for a "token" field (most reliable for web apps).
   if (e && e.postData && e.postData.contents) {
     try {
       var body = JSON.parse(e.postData.contents);
+      debugInfo.push("postData.contents parsed OK");
       if (body && body.token) {
         provided = String(body.token);
+        debugInfo.push("token from body: [" + provided + "]");
+      } else {
+        debugInfo.push("body has no 'token' field. Keys: " + Object.keys(body).join(","));
       }
     } catch (err) {
-      // Not JSON — fall through to other checks.
+      debugInfo.push("JSON parse failed: " + err.message + " | raw: [" + e.postData.contents + "]");
     }
+  } else {
+    debugInfo.push("no postData.contents (e=" + (e ? "yes" : "null") + ")");
   }
 
   // 2. Check query string / form parameters.
   if (!provided && e && e.parameter && e.parameter.token) {
     provided = e.parameter.token;
+    debugInfo.push("token from parameter: [" + provided + "]");
   }
 
   // 3. Check headers (may work in some environments but not reliably in web apps).
   if (!provided && e && e.headers) {
-    provided = e.headers["x-auth-token"] || e.headers["X-Auth-Token"] || "";
+    var hdr = e.headers["x-auth-token"] || e.headers["X-Auth-Token"] || "";
+    provided = hdr;
+    debugInfo.push("token from header: [" + hdr + "]");
   }
+
+  debugInfo.push("expected token: [" + expected + "]");
+  debugInfo.push("provided token: [" + provided + "]");
+  debugInfo.push("MATCH: " + (provided === expected));
+  Logger.log("AUTH DEBUG: " + debugInfo.join(" | "));
 
   return provided === expected;
 }

@@ -60,11 +60,14 @@ async function forwardToBackend(
     body: JSON.stringify({ action, token: AUTH_TOKEN, ...payload }),
   });
 
+  const responseBody = await response.json().catch(() => ({ success: false, message: "No response body" }));
   if (!response.ok) {
+    console.error(`[moderation-proxy] action=${action} | token length=${AUTH_TOKEN.length} | token preview=${AUTH_TOKEN.slice(0, 8)}... | http=${response.status} | response=${JSON.stringify(responseBody)}`);
     return { success: false, message: `Backend returned HTTP ${response.status}` };
   }
 
-  return await response.json();
+  console.log(`[moderation-proxy] action=${action} | token length=${AUTH_TOKEN.length} | token preview=${AUTH_TOKEN.slice(0, 8)}... | success=${responseBody.success}`);
+  return responseBody;
 }
 
 /**
