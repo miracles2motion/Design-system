@@ -40,24 +40,24 @@ function isPasswordValid(provided: string): boolean {
 }
 
 /**
- * Forward a request to the Apps Script backend with the auth token injected.
+ * Forward a request to the Apps Script backend with the auth token injected
+ * into the POST body (Apps Script web apps do not reliably pass custom
+ * HTTP headers through to the event object).
  */
 async function forwardToBackend(
   action: string,
   payload: Record<string, unknown> = {},
-  method: "GET" | "POST" = "POST",
 ) {
   if (!COMMUNITY_API) {
     return { success: false, message: "Community backend is not configured." };
   }
 
   const response = await fetch(`${COMMUNITY_API}/exec`, {
-    method,
+    method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Auth-Token": AUTH_TOKEN,
     },
-    body: method === "POST" ? JSON.stringify({ action, ...payload }) : undefined,
+    body: JSON.stringify({ action, token: AUTH_TOKEN, ...payload }),
   });
 
   if (!response.ok) {
@@ -81,7 +81,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const result = await forwardToBackend("listSubmissions", { status: "pending", limit: 100 }, "POST");
+    const result = await forwardToBackend("listSubmissions", { status: "pending", limit: 100 });
     return NextResponse.json(result);
   } catch (err) {
     return NextResponse.json(
