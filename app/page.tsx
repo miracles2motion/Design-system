@@ -30,6 +30,7 @@ import {
   Plus,
   Search,
   Send,
+  Share2,
   Settings,
   ShieldCheck,
   SlidersHorizontal,
@@ -43,6 +44,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import foundationsJson from "@/data/windows_11_pro_foundations.json";
 import uiJson from "@/data/windows_11_pro_ui.json";
 import { STARTER_DESIGNS, type StarterDesign } from "@/data/marketplace";
+import { isCommunityBackendConfigured, listCommunityDesigns, submitCommunityDesign, approveSubmission, rejectSubmission, fetchPendingSubmissions, type CommunityDesign, type CommunitySubmission } from "@/lib/community";
 import { clearLocal, readLocal, removeLocal, writeLocal } from "@/lib/storage";
 import { validateFoundationsDocument, validateOpenUiDocument, validateThemeDraft, validateThemeExports, type ThemeDiagnostic } from "@/lib/diagnostics";
 import { strToU8, zipSync } from "fflate";
@@ -68,7 +70,7 @@ import {
   type ThemeTypography,
 } from "@/lib/theme";
 
-type View = "overview" | "studio" | "marketplace" | "settings";
+type View = "overview" | "studio" | "marketplace" | "moderation" | "settings";
 type Provider = "openai" | "anthropic" | "gemini" | "openrouter" | "nvidia" | "custom";
 type ChatMessage = { id: string; role: "assistant" | "user"; text: string };
 type AppMode = "light" | "dark";
@@ -537,6 +539,7 @@ function StudioView({
   rememberApiKey,
   onGoSettings,
   onToast,
+  onShare,
 }: {
   theme: ThemeDraft;
   mode: ThemeMode;
@@ -556,6 +559,7 @@ function StudioView({
   rememberApiKey: boolean;
   onGoSettings: () => void;
   onToast: (message: string) => void;
+  onShare: () => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
   const [prompt, setPrompt] = useState("");
@@ -682,7 +686,7 @@ function StudioView({
     <div className="page-stack studio-view">
       <div className="studio-heading">
         <div><div className="breadcrumb"><span>Workspace</span><ChevronRight size={13}/><span>Studio</span></div><div className="studio-title-row"><h1>{theme.name}</h1><span className="local-badge"><span/> Saved locally</span></div><p>Refine your tokens and see them applied to the sample website.</p></div>
-        <div className="studio-toolbar"><button className="button button--subtle button--small" type="button" onClick={onImport}><Upload size={14}/> Import</button><button className="button button--subtle button--small" type="button" onClick={onUndo} disabled={!canUndo}><ArrowDownToLine size={14}/> Undo</button><button className="button button--subtle button--small validation-trigger" type="button" aria-label={`Validate theme: ${validationErrors.length} errors, ${validationWarnings.length} warnings`} onClick={() => setValidationOpen(true)}><ShieldCheck size={14}/> Validate<span className={`validation-badge ${validationErrors.length ? "validation-badge--error" : validationWarnings.length ? "validation-badge--warning" : "validation-badge--ok"}`}>{validationErrors.length || validationWarnings.length || "✓"}</span></button><div className="export-actions"><button className="button button--primary button--small" type="button" onClick={onExportPair}><Download size={14}/> Export pair</button><button className="export-more" type="button" aria-label="More export formats" aria-haspopup="menu" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen((open) => !open)}><ChevronDown size={14}/></button>{exportMenuOpen && <div className="export-menu" ref={exportMenuRef} role="menu" onKeyDown={(event) => {
+        <div className="studio-toolbar"><button className="button button--subtle button--small" type="button" onClick={onImport}><Upload size={14}/> Import</button><button className="button button--subtle button--small" type="button" onClick={onUndo} disabled={!canUndo}><ArrowDownToLine size={14}/> Undo</button><button className="button button--subtle button--small validation-trigger" type="button" aria-label={`Validate theme: ${validationErrors.length} errors, ${validationWarnings.length} warnings`} onClick={() => setValidationOpen(true)}><ShieldCheck size={14}/> Validate<span className={`validation-badge ${validationErrors.length ? "validation-badge--error" : validationWarnings.length ? "validation-badge--warning" : "validation-badge--ok"}`}>{validationErrors.length || validationWarnings.length || "✓"}</span></button><button className="button button--subtle button--small" type="button" onClick={onShare}><Share2 size={14}/> Share</button><div className="export-actions"><button className="button button--primary button--small" type="button" onClick={onExportPair}><Download size={14}/> Export pair</button><button className="export-more" type="button" aria-label="More export formats" aria-haspopup="menu" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen((open) => !open)}><ChevronDown size={14}/></button>{exportMenuOpen && <div className="export-menu" ref={exportMenuRef} role="menu" onKeyDown={(event) => {
             const items = Array.from(exportMenuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
             const currentIndex = items.indexOf(document.activeElement as HTMLElement);
             if (event.key === "Escape") {
@@ -808,6 +812,9 @@ function MarketplaceView({
   const [search, setSearch] = useState("");
   const [collection, setCollection] = useState("All designs");
   const [sort, setSort] = useState("Featured");
+  const [activeTab, setActiveTab] = useState<"starter" | "community">("starter");
+  const [communityDesigns, setCommunityDesigns] = useState<CommunityDesign[]>([]);
+  const [communityLoading, setCommunityLoading] = useState(false);
   const collections = ["All designs", "Desktop", "Productivity", "Editorial", "Dark-first", "Minimal"];
   const filtered = useMemo(() => {
     const query = search.toLowerCase().trim();
@@ -817,14 +824,190 @@ function MarketplaceView({
     if (sort === "Recently added") items = [...items].reverse();
     return items;
   }, [collection, search, sort]);
+  const filteredCommunity = useMemo(() => {
+    const query = search.toLowerCase().trim();
+    let items = communityDesigns;
+    if (query) items = items.filter((item) => `${item.name} ${item.description} ${item.creator}`.toLowerCase().includes(query));
+    if (sort === "Name A–Z") items = [...items].sort((a, b) => a.name.localeCompare(b.name));
+    if (sort === "Recently added") items = [...items].reverse();
+    return items;
+  }, [communityDesigns, search, sort]);
+  useEffect(() => {
+    if (activeTab !== "community") return;
+    let alive = true;
+    setCommunityLoading(true);
+    listCommunityDesigns(100)
+      .then((designs) => { if (alive) setCommunityDesigns(designs); })
+      .catch(() => { if (alive) setCommunityDesigns([]); })
+      .finally(() => { if (alive) setCommunityLoading(false); });
+    return () => { alive = false; };
+  }, [activeTab]);
+  const shareYourDesign = () => window.dispatchEvent(new CustomEvent("forma:share"));
   return (
     <div className="page-stack marketplace-view">
-      <section className="market-hero"><div className="market-hero__copy"><div className="eyebrow-label"><span className="eyebrow-line"/> DESIGN SYSTEM LIBRARY</div><h1>Find a foundation<br/>for your <em>next idea.</em></h1><p>Browse ready-to-remix design systems. Preview each one on the sample website, then bring its tokens into your workspace.</p><div className="market-hero__foot"><span><span className="market-live-dot"/> Starter library is available now</span><span>Community publishing is coming later</span></div></div><div className="market-hero__art"><div className="market-orbit market-orbit--one"/><div className="market-orbit market-orbit--two"/><div className="market-stack market-stack--back"><i/><i/><i/></div><div className="market-stack market-stack--front"><span/><span/><b/><i/><i/><i/><small/></div><div className="market-spark market-spark--one">✦</div><div className="market-spark market-spark--two">✦</div></div></section>
-      <section className="market-controls"><div className="market-tabs"><button className="is-active" type="button"><Sparkles size={14}/> Starter library <span>{STARTER_DESIGNS.length}</span></button><button type="button" className="market-community-tab" onClick={() => window.dispatchEvent(new CustomEvent("forma:community-info"))}><Layers3 size={14}/> Community designs <span className="coming-pill">Coming soon</span></button></div><div className="market-tools"><label className="search-field"><Search size={15}/><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search systems…"/><kbd>⌘ K</kbd></label><label className="sort-select"><SlidersHorizontal size={14}/><select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="Sort designs"><option>Featured</option><option>Name A–Z</option><option>Recently added</option></select><ChevronDown size={13}/></label></div></section>
-      <div className="market-body"><aside className="market-filters"><div className="filter-heading">COLLECTIONS <button type="button" aria-label="Clear collection filter" onClick={() => setCollection("All designs")}><Filter size={13}/></button></div>{collections.map((name, index) => <button key={name} type="button" className={`filter-option ${collection === name ? "is-active" : ""}`} onClick={() => setCollection(name)}>{index === 0 ? <Layers3 size={15}/> : <span className={`filter-dot filter-dot--${index}`}/>}<span>{name}</span><small>{index === 0 ? STARTER_DESIGNS.length : STARTER_DESIGNS.filter((item) => item.collection === name).length}</small></button>)}<div className="filter-promo"><span><Sparkles size={15}/></span><b>Make it yours</b><p>Every starter is editable. Change the palette, shape, or density in one click.</p><button type="button" onClick={() => window.dispatchEvent(new CustomEvent("forma:create"))}>Start creating <ArrowRight size={13}/></button></div></aside><section className="market-results"><div className="market-results__heading"><div><span>{filtered.length} STARTER SYSTEMS</span><h2>{collection === "All designs" ? "Curated foundations" : collection}</h2></div></div>
-        {filtered.length ? <div className="market-grid">{filtered.map((item) => <StarterCard key={item.id} item={item} mode={mode} favorite={favorites.includes(item.id)} onToggleFavorite={() => onToggleFavorite(item.id)} onPreview={() => onPreview(item)} onApply={() => onApply(item)}/>)}</div> : <div className="empty-state"><span><Search size={22}/></span><h3>No matching designs</h3><p>Try a different search or collection.</p><button className="button button--subtle" type="button" onClick={() => { setSearch(""); setCollection("All designs"); }}>Clear filters</button></div>}
-        <div className="market-note"><span><ShieldCheck size={14}/></span><p><b>Community marketplace, coming next.</b> These are Forma starter designs. We’ll add community publishing after a moderation and storage path is in place—no one’s private draft is shared.</p><button type="button" onClick={() => window.dispatchEvent(new CustomEvent("forma:community-info"))}>How it works <ArrowRight size={13}/></button></div>
+      <section className="market-hero"><div className="market-hero__copy"><div className="eyebrow-label"><span className="eyebrow-line"/> DESIGN SYSTEM LIBRARY</div><h1>Find a foundation<br/>for your <em>next idea.</em></h1><p>Browse ready-to-remix design systems. Preview each one on the sample website, then bring its tokens into your workspace.</p><div className="market-hero__foot"><span><span className="market-live-dot"/> Starter library is available now</span><span>{communityDesigns.length > 0 ? `${communityDesigns.length} community designs` : "Community publishing is now live"}</span></div></div><div className="market-hero__art"><div className="market-orbit market-orbit--one"/><div className="market-orbit market-orbit--two"/><div className="market-stack market-stack--back"><i/><i/><i/></div><div className="market-stack market-stack--front"><span/><span/><b/><i/><i/><i/><small/></div><div className="market-spark market-spark--one">✦</div><div className="market-spark market-spark--two">✦</div></div></section>
+      <section className="market-controls"><div className="market-tabs"><button className={activeTab === "starter" ? "is-active" : ""} type="button" onClick={() => setActiveTab("starter")}><Sparkles size={14}/> Starter library <span>{STARTER_DESIGNS.length}</span></button><button className={`market-community-tab ${activeTab === "community" ? "is-active" : ""}`} type="button" onClick={() => setActiveTab("community")}><Layers3 size={14}/> Community designs <span className="live-pill">{communityDesigns.length > 0 ? `${communityDesigns.length} live` : "Live"}</span></button></div><div className="market-tools"><label className="search-field"><Search size={15}/><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search systems…"/><kbd>⌘ K</kbd></label><label className="sort-select"><SlidersHorizontal size={14}/><select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="Sort designs"><option>Featured</option><option>Name A–Z</option><option>Recently added</option></select><ChevronDown size={13}/></label></div></section>
+      <div className="market-body"><aside className="market-filters"><div className="filter-heading">COLLECTIONS <button type="button" aria-label="Clear collection filter" onClick={() => setCollection("All designs")}><Filter size={13}/></button></div>{collections.map((name, index) => <button key={name} type="button" className={`filter-option ${collection === name ? "is-active" : ""}`} onClick={() => setCollection(name)}>{index === 0 ? <Layers3 size={15}/> : <span className={`filter-dot filter-dot--${index}`}/>}<span>{name}</span><small>{index === 0 ? STARTER_DESIGNS.length : STARTER_DESIGNS.filter((item) => item.collection === name).length}</small></button>)}<div className="filter-promo"><span><Sparkles size={15}/></span><b>Make it yours</b><p>Every starter is editable. Change the palette, shape, or density in one click.</p><button type="button" onClick={() => window.dispatchEvent(new CustomEvent("forma:create"))}>Start creating <ArrowRight size={13}/></button></div><div className="filter-promo filter-promo--share"><span><Share2 size={15}/></span><b>Share your design</b><p>Submit your theme to the community marketplace for others to discover and remix.</p><button type="button" onClick={shareYourDesign}>Share a design <ArrowRight size={13}/></button></div></aside><section className="market-results"><div className="market-results__heading"><div><span>{activeTab === "starter" ? `${filtered.length} STARTER SYSTEMS` : (communityLoading ? "LOADING COMMUNITY DESIGNS" : `${filteredCommunity.length} COMMUNITY DESIGNS`)}</span><h2>{activeTab === "starter" ? (collection === "All designs" ? "Curated foundations" : collection) : "Community designs"}</h2></div></div>
+        {activeTab === "starter" ? (
+          filtered.length ? <div className="market-grid">{filtered.map((item) => <StarterCard key={item.id} item={item} mode={mode} favorite={favorites.includes(item.id)} onToggleFavorite={() => onToggleFavorite(item.id)} onPreview={() => onPreview(item)} onApply={() => onApply(item)}/>)}</div> : <div className="empty-state"><span><Search size={22}/></span><h3>No matching designs</h3><p>Try a different search or collection.</p><button className="button button--subtle" type="button" onClick={() => { setSearch(""); setCollection("All designs"); }}>Clear filters</button></div>
+        ) : communityLoading ? (
+          <div className="empty-state"><span className="loading-mark-small"><Sparkles size={20}/></span><h3>Loading community designs…</h3><p>Fetching the latest from the backend.</p></div>
+        ) : filteredCommunity.length ? (
+          <div className="market-grid">{filteredCommunity.map((item) => <CommunityCard key={item.id} item={item} mode={mode} onPreview={() => onPreview({ id: item.id, title: item.name, description: item.description, collection: "Community", creator: item.creator, tags: ["Community"], tokenCount: 0, theme: item.tokens })} onApply={() => onApply({ id: item.id, title: item.name, description: item.description, collection: "Community", creator: item.creator, tags: ["Community"], tokenCount: 0, theme: item.tokens })}/>)}</div>
+        ) : (
+          <div className="empty-state"><span><Layers3 size={22}/></span><h3>No community designs yet</h3><p>Be the first to share a design. Submitted themes appear here after moderation.</p><button className="button button--subtle" type="button" onClick={shareYourDesign}>Share your design <ArrowRight size={13}/></button></div>
+        )}
+        <div className="market-note"><span><ShieldCheck size={14}/></span><p><b>{activeTab === "starter" ? "Community marketplace, now live." : "Moderated community designs."}</b>{activeTab === "starter" ? " These are Forma starter designs. Community submissions are reviewed before publishing—no one's private draft is shared." : " Every community design has been reviewed and approved before appearing here."}</p><button type="button" onClick={() => window.dispatchEvent(new CustomEvent("forma:community-info"))}>How it works <ArrowRight size={13}/></button></div>
       </section></div>
+    </div>
+  );
+}
+
+function CommunityCard({
+  item,
+  mode,
+  onPreview,
+  onApply,
+}: {
+  item: CommunityDesign;
+  mode: ThemeMode;
+  onPreview: () => void;
+  onApply: () => void;
+}) {
+  return (
+    <article className="starter-card starter-card--community">
+      <button className="starter-card__preview" type="button" onClick={onPreview} aria-label={`Preview ${item.name}`}>
+        <div className="starter-card__mini"><SampleWebsite theme={item.tokens} mode={mode} small /></div>
+        <span className="starter-card__peek"><Eye size={14} /> Preview</span>
+      </button>
+      <div className="starter-card__body">
+        <div className="starter-card__title-row"><div><div className="starter-card__eyebrow">Community · by {item.creator}</div><h3>{item.name}</h3></div></div>
+        <p>{item.description}</p>
+        <div className="starter-card__meta"><div className="creator-avatar">{item.creator.slice(0, 1) || "?"}</div><span>{item.creator}</span><button className="text-button" type="button" onClick={onApply}>Use design <ArrowRight size={13}/></button></div>
+      </div>
+    </article>
+  );
+}
+
+function ModerationView({
+  password,
+  access,
+  loading,
+  error,
+  submissions,
+  onPasswordChange,
+  onLogin,
+  onLogout,
+  onApprove,
+  onReject,
+  theme,
+  previewMode,
+}: {
+  password: string;
+  access: boolean;
+  loading: boolean;
+  error: string;
+  submissions: CommunitySubmission[];
+  onPasswordChange: (value: string) => void;
+  onLogin: (password: string) => void;
+  onLogout: () => void;
+  onApprove: (id: string) => void;
+  onReject: (id: string) => void;
+  theme: ThemeDraft;
+  previewMode: ThemeMode;
+}) {
+  return (
+    <div className="page-stack moderation-view">
+      <div className="studio-heading">
+        <div>
+          <div className="breadcrumb"><span>Workspace</span><ChevronRight size={13}/><span>Review queue</span></div>
+          <div className="studio-title-row"><h1>Moderation queue</h1><span className="local-badge"><span/> {submissions.length} pending</span></div>
+          <p>Review community submissions and approve or reject them. Approved designs are published to the marketplace immediately.</p>
+        </div>
+        {access && <button type="button" className="button button--subtle button--small" onClick={onLogout}>Log out</button>}
+      </div>
+
+      {error && <div className="moderation-error"><span><ShieldCheck size={14}/></span>{error}</div>}
+
+      {!access ? (
+        <div className="moderation-gate">
+          <div className="small-modal" style={{ width: "min(415px, 94vw)", margin: "0 auto" }}>
+            <span className="small-modal__icon"><ShieldCheck size={19}/></span>
+            <span className="section-kicker">MODERATION ACCESS</span>
+            <h2>Enter your moderator password</h2>
+            <p>This queue is restricted. Enter the password to view and review pending submissions.</p>
+            <div className="share-dialog-fields">
+              <label className="share-field" htmlFor="moderation-password">
+                <span>Password</span>
+                <input
+                  id="moderation-password"
+                  type="password"
+                  value={password}
+                  onChange={(event) => onPasswordChange(event.target.value)}
+                  onKeyDown={(event) => { if (event.key === "Enter") onLogin(password); }}
+                  autoFocus
+                />
+              </label>
+            </div>
+            <div className="share-dialog-actions">
+              <button
+                type="button"
+                className="button button--primary"
+                disabled={loading}
+                onClick={() => onLogin(password)}
+              >
+                {loading ? "Checking…" : "Access queue"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : submissions.length === 0 ? (
+        <div className="empty-state">
+          <span><Check size={22}/></span>
+          <h3>No pending submissions</h3>
+          <p>The moderation queue is clear. New community submissions will appear here for review.</p>
+        </div>
+      ) : (
+        <div className="moderation-grid">
+          {submissions.map((item) => (
+            <article key={item.id} className="starter-card starter-card--community">
+              <div className="starter-card__mini"><SampleWebsite theme={item.tokens} mode={previewMode} small /></div>
+              <div className="starter-card__body">
+                <div className="starter-card__title-row">
+                  <div>
+                    <div className="starter-card__eyebrow">Community · by {item.creator}</div>
+                    <h3>{item.name}</h3>
+                  </div>
+                </div>
+                {item.description && <p>{item.description}</p>}
+                <div className="starter-card__meta">
+                  <div className="creator-avatar">{item.creator.slice(0, 1) || "?"}</div>
+                  <span>{item.creator}</span>
+                  <small className="submission-time">{item.submitted_at}</small>
+                </div>
+                <div className="moderation-actions">
+                  <button
+                    type="button"
+                    className="button button--primary button--small"
+                    disabled={loading}
+                    onClick={() => onApprove(item.id)}
+                  >
+                    <Check size={14}/> Approve
+                  </button>
+                  <button
+                    type="button"
+                    className="button button--subtle button--small"
+                    disabled={loading}
+                    onClick={() => onReject(item.id)}
+                  >
+                    <X size={14}/> Reject
+                  </button>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -946,6 +1129,17 @@ export default function HomePage() {
   const [mobileMenu, setMobileMenu] = useState(false);
   const [importInputKey, setImportInputKey] = useState(0);
   const [showCommunityInfo, setShowCommunityInfo] = useState(false);
+  const [showShareDialog, setShowShareDialog] = useState(false);
+  const [shareName, setShareName] = useState("");
+  const [shareDescription, setShareDescription] = useState("");
+  const [shareCreator, setShareCreator] = useState("");
+  const [shareSubmitting, setShareSubmitting] = useState(false);
+  const shareDialogRef = useRef<HTMLElement | null>(null);
+  const [moderationPassword, setModerationPassword] = useState("");
+  const [moderationAccess, setModerationAccess] = useState(false);
+  const [moderationLoading, setModerationLoading] = useState(false);
+  const [pendingSubmissions, setPendingSubmissions] = useState<CommunitySubmission[]>([]);
+  const [moderationError, setModerationError] = useState("");
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const keyPersistence = useRef<Promise<void>>(Promise.resolve());
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -954,6 +1148,98 @@ export default function HomePage() {
     setToast(message);
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(""), 3200);
+  }, []);
+
+  const handleShareToCommunity = useCallback(async () => {
+    if (!isCommunityBackendConfigured()) {
+      notify("Community backend is not configured. Set NEXT_PUBLIC_FORMA_COMMUNITY_API.");
+      return;
+    }
+    const name = shareName.trim();
+    if (!name) {
+      notify("Give your shared design a name first.");
+      return;
+    }
+    setShareSubmitting(true);
+    try {
+      const submission = await submitCommunityDesign({
+        name,
+        creator: shareCreator.trim() || "anonymous",
+        description: shareDescription.trim(),
+        tokens: theme,
+      });
+      notify(`Submitted "${name}" for moderation. It will appear in the marketplace once approved.`);
+      setShowShareDialog(false);
+      setShareName("");
+      setShareDescription("");
+      setShareCreator("");
+      return submission;
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Failed to submit to the community backend.");
+    } finally {
+      setShareSubmitting(false);
+    }
+  }, [notify, shareName, shareCreator, shareDescription, theme]);
+
+  const openShareDialog = useCallback(() => {
+    setShareName(theme.name);
+    setShareDescription(theme.description);
+    setShareCreator("");
+    setShowShareDialog(true);
+  }, [theme.name, theme.description]);
+
+  const handleModerationLogin = useCallback(async (password: string) => {
+    if (!password.trim()) {
+      setModerationError("Enter your moderator password.");
+      return;
+    }
+    setModerationLoading(true);
+    setModerationError("");
+    try {
+      const submissions = await fetchPendingSubmissions(password);
+      setPendingSubmissions(submissions);
+      setModerationAccess(true);
+    } catch (err) {
+      setModerationAccess(false);
+      setModerationError(err instanceof Error ? err.message : "Failed to access moderation queue.");
+    } finally {
+      setModerationLoading(false);
+    }
+  }, []);
+
+  const handleModerationApprove = useCallback(async (id: string) => {
+    setModerationLoading(true);
+    setModerationError("");
+    try {
+      await approveSubmission(moderationPassword, id);
+      setPendingSubmissions((current) => current.filter((s) => s.id !== id));
+      notify("Design approved and published to the marketplace.");
+    } catch (err) {
+      setModerationError(err instanceof Error ? err.message : "Failed to approve submission.");
+    } finally {
+      setModerationLoading(false);
+    }
+  }, [moderationPassword, notify]);
+
+  const handleModerationReject = useCallback(async (id: string) => {
+    setModerationLoading(true);
+    setModerationError("");
+    try {
+      await rejectSubmission(moderationPassword, id, "Rejected by moderator");
+      setPendingSubmissions((current) => current.filter((s) => s.id !== id));
+      notify("Submission rejected.");
+    } catch (err) {
+      setModerationError(err instanceof Error ? err.message : "Failed to reject submission.");
+    } finally {
+      setModerationLoading(false);
+    }
+  }, [moderationPassword, notify]);
+
+  const logoutModeration = useCallback(() => {
+    setModerationAccess(false);
+    setModerationPassword("");
+    setPendingSubmissions([]);
+    setModerationError("");
   }, []);
 
   const persistProviderKey = useCallback((value: string | null) => {
@@ -1052,6 +1338,7 @@ export default function HomePage() {
         setMobileMenu(false);
         setPreviewItem(null);
         setShowCommunityInfo(false);
+        setShowShareDialog(false);
       }
     };
     window.addEventListener("keydown", handleShortcut);
@@ -1060,6 +1347,7 @@ export default function HomePage() {
 
   useFocusTrap(Boolean(previewItem), previewItemRef, () => setPreviewItem(null));
   useFocusTrap(showCommunityInfo, communityInfoRef, () => setShowCommunityInfo(false));
+  useFocusTrap(showShareDialog, shareDialogRef, () => setShowShareDialog(false));
 
   useEffect(() => {
     const create = () => createNewSystem();
@@ -1068,15 +1356,18 @@ export default function HomePage() {
       if (typeof message === "string") notify(message);
     };
     const community = () => setShowCommunityInfo(true);
+    const share = () => openShareDialog();
     const toggleMode = () => setAppMode((current) => current === "light" ? "dark" : "light");
     window.addEventListener("forma:create", create);
     window.addEventListener("forma:toast", toastListener);
     window.addEventListener("forma:community-info", community);
+    window.addEventListener("forma:share", share);
     window.addEventListener("forma:toggle-app-mode", toggleMode);
     return () => {
       window.removeEventListener("forma:create", create);
       window.removeEventListener("forma:toast", toastListener);
       window.removeEventListener("forma:community-info", community);
+      window.removeEventListener("forma:share", share);
       window.removeEventListener("forma:toggle-app-mode", toggleMode);
     };
   });
@@ -1268,6 +1559,7 @@ export default function HomePage() {
     { id: "overview", label: "Overview", icon: <Home size={17}/>, section: "main" },
     { id: "studio", label: "AI Studio", icon: <Sparkles size={17}/>, section: "main" },
     { id: "marketplace", label: "Marketplace", icon: <Layers3 size={17}/>, section: "main" },
+    { id: "moderation", label: "Review queue", icon: <ShieldCheck size={17}/>, section: "manage" },
     { id: "settings", label: "Settings", icon: <Settings size={17}/>, section: "manage" },
   ];
   const activeNav = navItems.find((item) => item.id === view);
@@ -1320,8 +1612,9 @@ export default function HomePage() {
   };
 
   const main = view === "overview" ? <OverviewView theme={theme} projects={projects} mode={previewMode} onCreate={createNewSystem} onOpenStudio={() => onNav("studio")} onOpenAssistant={openAssistant} onOpenProject={openProject} onOpenMarketplace={() => onNav("marketplace")} onImport={openImport} onApply={applyStarter} onPreviewItem={setPreviewItem}/> :
-    view === "studio" ? <StudioView theme={theme} mode={previewMode} onModeChange={setPreviewMode} onThemeChange={updateTheme} onUndo={undo} canUndo={history.length > 0} onExport={exportJson} onExportFoundations={exportFoundations} onExportPair={exportPair} onDownloadCss={exportCss} onImport={openImport} provider={providerConfig.provider} model={providerConfig.model} baseUrl={providerConfig.baseUrl} apiKey={apiKey} rememberApiKey={rememberApiKey} onGoSettings={() => onNav("settings")} onToast={notify}/> :
+      view === "studio" ? <StudioView theme={theme} mode={previewMode} onModeChange={setPreviewMode} onThemeChange={updateTheme} onUndo={undo} canUndo={history.length > 0} onExport={exportJson} onExportFoundations={exportFoundations} onExportPair={exportPair} onDownloadCss={exportCss} onImport={openImport} provider={providerConfig.provider} model={providerConfig.model} baseUrl={providerConfig.baseUrl} apiKey={apiKey} rememberApiKey={rememberApiKey} onGoSettings={() => onNav("settings")} onToast={notify} onShare={openShareDialog}/> :
       view === "marketplace" ? <MarketplaceView mode={previewMode} favorites={favorites} onToggleFavorite={toggleFavorite} onApply={applyStarter} onPreview={setPreviewItem}/> :
+      view === "moderation" ? <ModerationView password={moderationPassword} access={moderationAccess} loading={moderationLoading} error={moderationError} submissions={pendingSubmissions} onPasswordChange={setModerationPassword} onLogin={handleModerationLogin} onLogout={logoutModeration} onApprove={handleModerationApprove} onReject={handleModerationReject} theme={theme} previewMode={previewMode}/> :
         <SettingsView provider={providerConfig.provider} model={providerConfig.model} baseUrl={providerConfig.baseUrl} apiKey={apiKey} rememberApiKey={rememberApiKey} onRememberApiKeyChange={changeRememberApiKey} onProviderChange={changeProvider} onModelChange={(model) => { setProviderConfig((config) => ({ ...config, model })); }} onBaseUrlChange={(baseUrl) => { setProviderConfig((config) => ({ ...config, baseUrl })); }} onApiKeyChange={(key) => { setApiKey(key); }} onClear={async () => { setApiKey(""); setRememberApiKey(false); await keyPersistence.current.catch(() => undefined); await clearLocal().catch(() => undefined); setTheme({ ...STARTER_THEME, id: createId() }); setProjects([]); setFavorites([]); setHistory([]); setProviderConfig({ provider: "openai", model: "gpt-4o-mini", baseUrl: "" }); notify("Local project data cleared"); }} onExportPair={exportPair} onToast={notify} onStartChat={openAssistant} theme={theme}/>;
 
   return (
@@ -1345,6 +1638,7 @@ export default function HomePage() {
       {toast && <div className="toast-message" role="status"><span className="toast-message__icon"><Check size={14}/></span>{toast}<button type="button" aria-label="Dismiss notification" onClick={() => setToast("")}><X size={14}/></button></div>}
       {previewItem && <div className="modal-backdrop" onClick={() => setPreviewItem(null)}><section ref={previewItemRef} tabIndex={-1} className="preview-modal" role="dialog" aria-modal="true" aria-label={`Preview ${previewItem.title}`} onClick={(event) => event.stopPropagation()}><div className="preview-modal__head"><div><span className="section-kicker">STARTER PREVIEW · {previewItem.collection.toUpperCase()}</span><h2>{previewItem.title}</h2><p>{previewItem.description}</p></div><IconButton label="Close preview" onClick={() => setPreviewItem(null)}><X size={17}/></IconButton></div><div className="preview-modal__toolbar"><span>{previewItem.tokenCount} tokens <span>·</span> Light + dark</span><div className="preview-modal__swatches">{[previewItem.theme.light.accent, previewItem.theme.light.secondary, previewItem.theme.light.background, previewItem.theme.light.text].map((color) => <i key={color} style={{ background: color }}/>)}</div></div><div className="preview-modal__stage"><SampleWebsite theme={previewItem.theme} mode={previewMode}/></div><div className="preview-modal__footer"><span>Preview uses the built-in sample website.</span><button className="button button--primary" type="button" onClick={() => applyStarter(previewItem)}>Use this design <ArrowRight size={14}/></button></div></section></div>}
       {showCommunityInfo && <div className="modal-backdrop" onClick={() => setShowCommunityInfo(false)}><section ref={communityInfoRef} tabIndex={-1} className="small-modal" role="dialog" aria-modal="true" aria-label="Community marketplace details" onClick={(event) => event.stopPropagation()}><button type="button" className="small-modal__close" aria-label="Close" onClick={() => setShowCommunityInfo(false)}><X size={17}/></button><span className="small-modal__icon"><Layers3 size={19}/></span><span className="section-kicker">COMMUNITY MARKETPLACE</span><h2>Shared designs, with permission.</h2><p>The first build keeps personal projects in your browser and shows a curated starter library. Community designs will be added only after there’s a moderated way to submit and publish them—nothing is shared automatically.</p><div className="small-modal__note"><ShieldCheck size={15}/> Public designs only. Never API keys, prompts, or private drafts.</div><button type="button" className="button button--primary" onClick={() => { setShowCommunityInfo(false); onNav("marketplace"); }}>Explore starter designs <ArrowRight size={14}/></button></section></div>}
+      {showShareDialog && <div className="modal-backdrop" onClick={() => setShowShareDialog(false)}><section ref={shareDialogRef} tabIndex={-1} className="small-modal" role="dialog" aria-modal="true" aria-label="Share design to community" onClick={(event) => event.stopPropagation()}><button type="button" className="small-modal__close" aria-label="Close" onClick={() => setShowShareDialog(false)}><X size={17}/></button><span className="small-modal__icon"><Share2 size={19}/></span><span className="section-kicker">SHARE TO COMMUNITY</span><h2>Submit this design for moderation</h2><p>Share your token theme so others can discover and remix it. Submissions are reviewed before they appear in the marketplace.</p><div className="share-dialog-fields"><label className="share-field" htmlFor="share-name"><span>Design name</span><input id="share-name" type="text" value={shareName} onChange={(event) => setShareName(event.target.value)} maxLength={80}/></label><label className="share-field" htmlFor="share-creator"><span>Your name (optional)</span><input id="share-creator" type="text" value={shareCreator} onChange={(event) => setShareCreator(event.target.value)} maxLength={60}/></label><label className="share-field" htmlFor="share-description"><span>Description</span><textarea id="share-description" rows={3} value={shareDescription} onChange={(event) => setShareDescription(event.target.value)} maxLength={200}/></label></div><div className="small-modal__note"><ShieldCheck size={15}/> Only the token theme is shared. No API keys or private drafts.</div><div className="share-dialog-actions"><button type="button" className="button button--subtle" onClick={() => setShowShareDialog(false)}>Cancel</button><button type="button" className="button button--primary" disabled={shareSubmitting} onClick={handleShareToCommunity}>{shareSubmitting ? "Submitting…" : "Submit for review"}</button></div></section></div>}
       {!isLoaded && <div className="loading-scrim"><span className="loading-mark"><AppIcon/></span><span>Opening your workspace…</span></div>}
     </div>
   );
