@@ -29,8 +29,10 @@ function nowIso() {
 
 /**
  * Validates the incoming request's auth token against the Config tab.
- * Reads the `X-Auth-Token` header (web-app mode) or the `token` field in
- * the request body (direct call mode).
+ * Reads the token from the request body (JSON field or form field), the
+ * query string, or the X-Auth-Token header. Apps Script web apps do not
+ * reliably pass custom HTTP headers through to the event object, so the
+ * token MUST be in the POST body for web-app calls to work.
  *
  * @param {Object} e The event object (doGet / doPost).
  * @return {boolean} true if authorised, false otherwise.
@@ -42,12 +44,29 @@ function isAuthorized(e) {
     return false;
   }
   var provided = "";
-  if (e && e.parameter && e.parameter.token) {
+
+  // 1. Check the POST body JSON for a "token" field (most reliable for web apps).
+  if (e && e.postData && e.postData.contents) {
+    try {
+      var body = JSON.parse(e.postData.contents);
+      if (body && body.token) {
+        provided = String(body.token);
+      }
+    } catch (err) {
+      // Not JSON — fall through to other checks.
+    }
+  }
+
+  // 2. Check query string / form parameters.
+  if (!provided && e && e.parameter && e.parameter.token) {
     provided = e.parameter.token;
-  } else if (e && e.headers) {
-    // Apps Script event headers are lowercased.
+  }
+
+  // 3. Check headers (may work in some environments but not reliably in web apps).
+  if (!provided && e && e.headers) {
     provided = e.headers["x-auth-token"] || e.headers["X-Auth-Token"] || "";
   }
+
   return provided === expected;
 }
 

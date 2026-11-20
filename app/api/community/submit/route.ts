@@ -40,10 +40,10 @@ export async function POST(request: NextRequest) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Auth-Token": AUTH_TOKEN,
       },
       body: JSON.stringify({
         action,
+        token: AUTH_TOKEN,
         name: body.name,
         creator: body.creator,
         description: body.description,

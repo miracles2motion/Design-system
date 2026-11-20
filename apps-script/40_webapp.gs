@@ -104,6 +104,12 @@ function doPost(e) {
           actor: body.actor
         }));
 
+      case "listSubmissions":
+        return jsonOutput(listSubmissions({
+          status: body.status,
+          limit: body.limit
+        }));
+
       case "createSubmission":
         return jsonOutput(createSubmission({
           name: body.name,
@@ -131,7 +137,7 @@ function doPost(e) {
         return jsonOutput(makeResponse(false,
             "Unknown action or missing action param. " +
             "Supported: createDesign, updateDesign, deleteDesign, " +
-            "createSubmission, approveSubmission, rejectSubmission."));
+            "listSubmissions, createSubmission, approveSubmission, rejectSubmission."));
     }
   } catch (err) {
     return jsonOutput(makeResponse(false, "doPost error: " + err.message));
