@@ -44,7 +44,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import foundationsJson from "@/data/windows_11_pro_foundations.json";
 import uiJson from "@/data/windows_11_pro_ui.json";
 import { STARTER_DESIGNS, type StarterDesign } from "@/data/marketplace";
-import { isCommunityBackendConfigured, listCommunityDesigns, submitCommunityDesign, type CommunityDesign } from "@/lib/community";
+import { isCommunityBackendConfigured, listCommunityDesigns, submitCommunityDesign, approveSubmission, rejectSubmission, fetchPendingSubmissions, type CommunityDesign, type CommunitySubmission } from "@/lib/community";
 import { clearLocal, readLocal, removeLocal, writeLocal } from "@/lib/storage";
 import { validateFoundationsDocument, validateOpenUiDocument, validateThemeDraft, validateThemeExports, type ThemeDiagnostic } from "@/lib/diagnostics";
 import { strToU8, zipSync } from "fflate";
@@ -70,7 +70,7 @@ import {
   type ThemeTypography,
 } from "@/lib/theme";
 
-type View = "overview" | "studio" | "marketplace" | "settings";
+type View = "overview" | "studio" | "marketplace" | "moderation" | "settings";
 type Provider = "openai" | "anthropic" | "gemini" | "openrouter" | "nvidia" | "custom";
 type ChatMessage = { id: string; role: "assistant" | "user"; text: string };
 type AppMode = "light" | "dark";
@@ -889,6 +889,129 @@ function CommunityCard({
   );
 }
 
+function ModerationView({
+  password,
+  access,
+  loading,
+  error,
+  submissions,
+  onPasswordChange,
+  onLogin,
+  onLogout,
+  onApprove,
+  onReject,
+  theme,
+  previewMode,
+}: {
+  password: string;
+  access: boolean;
+  loading: boolean;
+  error: string;
+  submissions: CommunitySubmission[];
+  onPasswordChange: (value: string) => void;
+  onLogin: (password: string) => void;
+  onLogout: () => void;
+  onApprove: (id: string) => void;
+  onReject: (id: string) => void;
+  theme: ThemeDraft;
+  previewMode: ThemeMode;
+}) {
+  return (
+    <div className="page-stack moderation-view">
+      <div className="studio-heading">
+        <div>
+          <div className="breadcrumb"><span>Workspace</span><ChevronRight size={13}/><span>Review queue</span></div>
+          <div className="studio-title-row"><h1>Moderation queue</h1><span className="local-badge"><span/> {submissions.length} pending</span></div>
+          <p>Review community submissions and approve or reject them. Approved designs are published to the marketplace immediately.</p>
+        </div>
+        {access && <button type="button" className="button button--subtle button--small" onClick={onLogout}>Log out</button>}
+      </div>
+
+      {error && <div className="moderation-error"><span><ShieldCheck size={14}/></span>{error}</div>}
+
+      {!access ? (
+        <div className="moderation-gate">
+          <div className="small-modal" style={{ width: "min(415px, 94vw)", margin: "0 auto" }}>
+            <span className="small-modal__icon"><ShieldCheck size={19}/></span>
+            <span className="section-kicker">MODERATION ACCESS</span>
+            <h2>Enter your moderator password</h2>
+            <p>This queue is restricted. Enter the password to view and review pending submissions.</p>
+            <div className="share-dialog-fields">
+              <label className="share-field" htmlFor="moderation-password">
+                <span>Password</span>
+                <input
+                  id="moderation-password"
+                  type="password"
+                  value={password}
+                  onChange={(event) => onPasswordChange(event.target.value)}
+                  onKeyDown={(event) => { if (event.key === "Enter") onLogin(password); }}
+                  autoFocus
+                />
+              </label>
+            </div>
+            <div className="share-dialog-actions">
+              <button
+                type="button"
+                className="button button--primary"
+                disabled={loading}
+                onClick={() => onLogin(password)}
+              >
+                {loading ? "Checking…" : "Access queue"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : submissions.length === 0 ? (
+        <div className="empty-state">
+          <span><Check size={22}/></span>
+          <h3>No pending submissions</h3>
+          <p>The moderation queue is clear. New community submissions will appear here for review.</p>
+        </div>
+      ) : (
+        <div className="moderation-grid">
+          {submissions.map((item) => (
+            <article key={item.id} className="starter-card starter-card--community">
+              <div className="starter-card__mini"><SampleWebsite theme={item.tokens} mode={previewMode} small /></div>
+              <div className="starter-card__body">
+                <div className="starter-card__title-row">
+                  <div>
+                    <div className="starter-card__eyebrow">Community · by {item.creator}</div>
+                    <h3>{item.name}</h3>
+                  </div>
+                </div>
+                {item.description && <p>{item.description}</p>}
+                <div className="starter-card__meta">
+                  <div className="creator-avatar">{item.creator.slice(0, 1) || "?"}</div>
+                  <span>{item.creator}</span>
+                  <small className="submission-time">{item.submitted_at}</small>
+                </div>
+                <div className="moderation-actions">
+                  <button
+                    type="button"
+                    className="button button--primary button--small"
+                    disabled={loading}
+                    onClick={() => onApprove(item.id)}
+                  >
+                    <Check size={14}/> Approve
+                  </button>
+                  <button
+                    type="button"
+                    className="button button--subtle button--small"
+                    disabled={loading}
+                    onClick={() => onReject(item.id)}
+                  >
+                    <X size={14}/> Reject
+                  </button>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SettingsView({
   provider,
   model,
@@ -1012,6 +1135,11 @@ export default function HomePage() {
   const [shareCreator, setShareCreator] = useState("");
   const [shareSubmitting, setShareSubmitting] = useState(false);
   const shareDialogRef = useRef<HTMLElement | null>(null);
+  const [moderationPassword, setModerationPassword] = useState("");
+  const [moderationAccess, setModerationAccess] = useState(false);
+  const [moderationLoading, setModerationLoading] = useState(false);
+  const [pendingSubmissions, setPendingSubmissions] = useState<CommunitySubmission[]>([]);
+  const [moderationError, setModerationError] = useState("");
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const keyPersistence = useRef<Promise<void>>(Promise.resolve());
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1059,6 +1187,60 @@ export default function HomePage() {
     setShareCreator("");
     setShowShareDialog(true);
   }, [theme.name, theme.description]);
+
+  const handleModerationLogin = useCallback(async (password: string) => {
+    if (!password.trim()) {
+      setModerationError("Enter your moderator password.");
+      return;
+    }
+    setModerationLoading(true);
+    setModerationError("");
+    try {
+      const submissions = await fetchPendingSubmissions(password);
+      setPendingSubmissions(submissions);
+      setModerationAccess(true);
+    } catch (err) {
+      setModerationAccess(false);
+      setModerationError(err instanceof Error ? err.message : "Failed to access moderation queue.");
+    } finally {
+      setModerationLoading(false);
+    }
+  }, []);
+
+  const handleModerationApprove = useCallback(async (id: string) => {
+    setModerationLoading(true);
+    setModerationError("");
+    try {
+      await approveSubmission(moderationPassword, id);
+      setPendingSubmissions((current) => current.filter((s) => s.id !== id));
+      notify("Design approved and published to the marketplace.");
+    } catch (err) {
+      setModerationError(err instanceof Error ? err.message : "Failed to approve submission.");
+    } finally {
+      setModerationLoading(false);
+    }
+  }, [moderationPassword, notify]);
+
+  const handleModerationReject = useCallback(async (id: string) => {
+    setModerationLoading(true);
+    setModerationError("");
+    try {
+      await rejectSubmission(moderationPassword, id, "Rejected by moderator");
+      setPendingSubmissions((current) => current.filter((s) => s.id !== id));
+      notify("Submission rejected.");
+    } catch (err) {
+      setModerationError(err instanceof Error ? err.message : "Failed to reject submission.");
+    } finally {
+      setModerationLoading(false);
+    }
+  }, [moderationPassword, notify]);
+
+  const logoutModeration = useCallback(() => {
+    setModerationAccess(false);
+    setModerationPassword("");
+    setPendingSubmissions([]);
+    setModerationError("");
+  }, []);
 
   const persistProviderKey = useCallback((value: string | null) => {
     const operation = keyPersistence.current.catch(() => undefined).then(() => (
@@ -1377,6 +1559,7 @@ export default function HomePage() {
     { id: "overview", label: "Overview", icon: <Home size={17}/>, section: "main" },
     { id: "studio", label: "AI Studio", icon: <Sparkles size={17}/>, section: "main" },
     { id: "marketplace", label: "Marketplace", icon: <Layers3 size={17}/>, section: "main" },
+    { id: "moderation", label: "Review queue", icon: <ShieldCheck size={17}/>, section: "manage" },
     { id: "settings", label: "Settings", icon: <Settings size={17}/>, section: "manage" },
   ];
   const activeNav = navItems.find((item) => item.id === view);
@@ -1431,6 +1614,7 @@ export default function HomePage() {
   const main = view === "overview" ? <OverviewView theme={theme} projects={projects} mode={previewMode} onCreate={createNewSystem} onOpenStudio={() => onNav("studio")} onOpenAssistant={openAssistant} onOpenProject={openProject} onOpenMarketplace={() => onNav("marketplace")} onImport={openImport} onApply={applyStarter} onPreviewItem={setPreviewItem}/> :
       view === "studio" ? <StudioView theme={theme} mode={previewMode} onModeChange={setPreviewMode} onThemeChange={updateTheme} onUndo={undo} canUndo={history.length > 0} onExport={exportJson} onExportFoundations={exportFoundations} onExportPair={exportPair} onDownloadCss={exportCss} onImport={openImport} provider={providerConfig.provider} model={providerConfig.model} baseUrl={providerConfig.baseUrl} apiKey={apiKey} rememberApiKey={rememberApiKey} onGoSettings={() => onNav("settings")} onToast={notify} onShare={openShareDialog}/> :
       view === "marketplace" ? <MarketplaceView mode={previewMode} favorites={favorites} onToggleFavorite={toggleFavorite} onApply={applyStarter} onPreview={setPreviewItem}/> :
+      view === "moderation" ? <ModerationView password={moderationPassword} access={moderationAccess} loading={moderationLoading} error={moderationError} submissions={pendingSubmissions} onPasswordChange={setModerationPassword} onLogin={handleModerationLogin} onLogout={logoutModeration} onApprove={handleModerationApprove} onReject={handleModerationReject} theme={theme} previewMode={previewMode}/> :
         <SettingsView provider={providerConfig.provider} model={providerConfig.model} baseUrl={providerConfig.baseUrl} apiKey={apiKey} rememberApiKey={rememberApiKey} onRememberApiKeyChange={changeRememberApiKey} onProviderChange={changeProvider} onModelChange={(model) => { setProviderConfig((config) => ({ ...config, model })); }} onBaseUrlChange={(baseUrl) => { setProviderConfig((config) => ({ ...config, baseUrl })); }} onApiKeyChange={(key) => { setApiKey(key); }} onClear={async () => { setApiKey(""); setRememberApiKey(false); await keyPersistence.current.catch(() => undefined); await clearLocal().catch(() => undefined); setTheme({ ...STARTER_THEME, id: createId() }); setProjects([]); setFavorites([]); setHistory([]); setProviderConfig({ provider: "openai", model: "gpt-4o-mini", baseUrl: "" }); notify("Local project data cleared"); }} onExportPair={exportPair} onToast={notify} onStartChat={openAssistant} theme={theme}/>;
 
   return (

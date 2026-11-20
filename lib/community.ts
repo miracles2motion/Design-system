@@ -3,30 +3,31 @@
  * =============================================================================
  * Client for the Forma Token Studio community design-sharing backend.
  *
- * The backend is an Apps Script web app (Google Sheets-backed). Its
- * deployment URL is configured via the NEXT_PUBLIC_FORMA_COMMUNITY_API env
- * var at build time. When the variable is absent, the client degrades
- * gracefully: read calls return an empty catalog and write calls throw a
- * clear error, so the app keeps working in local development without the
- * backend.
+ * SECURITY MODEL:
+ * - Reads (listDesigns, getDesign) call the Apps Script backend directly.
+ *   Only the backend URL is exposed to the browser via NEXT_PUBLIC_FORMA_COMMUNITY_API
+ *   — the URL is not a secret.
+ * - Writes (submitCommunityDesign) route through the server-side proxy at
+ *   /api/community/submit, which injects the auth token server-side. The
+ *   token NEVER reaches the browser.
+ * - Moderation (listSubmissions, approveSubmission, rejectSubmission) routes
+ *   through the server-side proxy at /api/community/moderation, which checks
+ *   the moderator password and injects the token server-side. Neither the
+ *   token nor the password reaches the browser.
+ *
+ * When the backend URL is not configured, read calls return an empty catalog
+ * and write calls throw a clear error, so the app keeps working in local
+ * development without the backend.
  */
 
 import type { ThemeDraft } from "@/lib/theme";
 
-/** The Apps Script web-app deployment URL. */
+/** The Apps Script web-app deployment URL (exposed to browser — not a secret). */
 const BASE_URL = (
   typeof process !== "undefined" &&
   process.env?.NEXT_PUBLIC_FORMA_COMMUNITY_API
 )
   ? String(process.env.NEXT_PUBLIC_FORMA_COMMUNITY_API).replace(/\/$/, "")
-  : "";
-
-/** The auth token the backend expects on write requests. */
-const AUTH_TOKEN = (
-  typeof process !== "undefined" &&
-  process.env?.NEXT_PUBLIC_FORMA_COMMUNITY_TOKEN
-)
-  ? String(process.env.NEXT_PUBLIC_FORMA_COMMUNITY_TOKEN)
   : "";
 
 /** True when the backend base URL is configured. */
@@ -66,6 +67,7 @@ export interface CommunitySubmission {
 
 /**
  * Performs a GET request against the community backend.
+ * Reads are public — no auth token is needed.
  */
 async function get<T>(action: string, params: Record<string, string> = {}): Promise<T> {
   if (!BASE_URL) {
@@ -74,31 +76,6 @@ async function get<T>(action: string, params: Record<string, string> = {}): Prom
   const query = new URLSearchParams({ action, ...params });
   const response = await fetch(`${BASE_URL}/exec?${query.toString()}`, {
     headers: { Accept: "application/json" },
-  });
-  if (!response.ok) {
-    throw new Error(`Community backend returned HTTP ${response.status}`);
-  }
-  const body = (await response.json()) as CommunityApiResponse<T>;
-  if (!body.success) {
-    throw new Error(body.message || "Community backend request failed.");
-  }
-  return body.data;
-}
-
-/**
- * Performs a POST request against the community backend with the auth token.
- */
-async function post<T>(action: string, payload: Record<string, unknown>): Promise<T> {
-  if (!BASE_URL) {
-    throw new Error("Community backend is not configured. Set NEXT_PUBLIC_FORMA_COMMUNITY_API.");
-  }
-  const response = await fetch(`${BASE_URL}/exec`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Auth-Token": AUTH_TOKEN,
-    },
-    body: JSON.stringify({ action, ...payload }),
   });
   if (!response.ok) {
     throw new Error(`Community backend returned HTTP ${response.status}`);
@@ -134,8 +111,9 @@ export async function getCommunityDesign(id: string): Promise<CommunityDesign | 
 }
 
 /**
- * Submits a theme for community moderation. Requires the auth token to be
- * configured (NEXT_PUBLIC_FORMA_COMMUNITY_TOKEN).
+ * Submits a theme for community moderation. Routes through the server-side
+ * proxy at /api/community/submit, which injects the auth token server-side.
+ * The token never reaches the browser.
  */
 export async function submitCommunityDesign(params: {
   name: string;
@@ -143,5 +121,91 @@ export async function submitCommunityDesign(params: {
   description: string;
   tokens: ThemeDraft;
 }): Promise<CommunitySubmission> {
-  return post<CommunitySubmission>("createSubmission", params);
+  const response = await fetch("/api/community/submit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.message || `Submit proxy returned HTTP ${response.status}`);
+  }
+  const body = (await response.json()) as CommunityApiResponse<CommunitySubmission>;
+  if (!body.success) {
+    throw new Error(body.message || "Community backend request failed.");
+  }
+  return body.data;
+}
+
+/**
+ * Fetches pending submissions for the moderation queue. Routes through the
+ * server-side proxy at /api/community/moderation, which checks the moderator
+ * password before returning data.
+ */
+export async function fetchPendingSubmissions(password: string): Promise<CommunitySubmission[]> {
+  const response = await fetch("/api/community/moderation", {
+    headers: { "x-moderation-password": password },
+  });
+  if (response.status === 401) {
+    throw new Error("Invalid moderator password.");
+  }
+  if (!response.ok) {
+    throw new Error(`Moderation proxy returned HTTP ${response.status}`);
+  }
+  const body = (await response.json()) as CommunityApiResponse<CommunitySubmission[]>;
+  if (!body.success) {
+    throw new Error(body.message || "Failed to fetch pending submissions.");
+  }
+  return body.data;
+}
+
+/**
+ * Approves a submission via the moderation proxy. Approved designs are
+ * copied into the Designs catalog automatically.
+ */
+export async function approveSubmission(password: string, id: string, note?: string): Promise<void> {
+  const response = await fetch("/api/community/moderation", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-moderation-password": password,
+    },
+    body: JSON.stringify({ action: "approve", id, note }),
+  });
+  if (response.status === 401) {
+    throw new Error("Invalid moderator password.");
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.message || `Approve returned HTTP ${response.status}`);
+  }
+  const body = (await response.json()) as CommunityApiResponse<unknown>;
+  if (!body.success) {
+    throw new Error(body.message || "Approve failed.");
+  }
+}
+
+/**
+ * Rejects a submission via the moderation proxy.
+ */
+export async function rejectSubmission(password: string, id: string, note: string): Promise<void> {
+  const response = await fetch("/api/community/moderation", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-moderation-password": password,
+    },
+    body: JSON.stringify({ action: "reject", id, note }),
+  });
+  if (response.status === 401) {
+    throw new Error("Invalid moderator password.");
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.message || `Reject returned HTTP ${response.status}`);
+  }
+  const body = (await response.json()) as CommunityApiResponse<unknown>;
+  if (!body.success) {
+    throw new Error(body.message || "Reject failed.");
+  }
 }

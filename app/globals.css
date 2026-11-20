@@ -234,6 +234,13 @@ button:disabled { cursor: not-allowed; opacity: .52; }
 .starter-card__meta { display: flex; align-items: center; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border); color: var(--text-3); font-size: 8px; }
 .creator-avatar { width: 18px; height: 18px; display: grid; place-items: center; border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border)); border-radius: 50%; background: var(--accent-subtle); color: var(--accent-text); font-size: 8px; font-weight: 700; }
 .starter-card__meta .text-button { margin-left: auto; font-size: 9px; }
+.moderation-view { gap: 20px; }
+.moderation-error { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid rgba(211,74,58,.25); border-radius: 8px; background: rgba(211,74,58,.06); color: #d34a3a; font-size: 9px; }
+.moderation-gate { display: flex; align-items: center; justify-content: center; padding: 40px 0; }
+.moderation-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 16px; }
+.moderation-actions { display: flex; gap: 8px; margin-top: 10px; }
+.moderation-actions .button { flex: 1; justify-content: center; }
+.submission-time { margin-left: auto; font-size: 7px; color: var(--text-3); opacity: .7; }
 .marketplace-view { gap: 22px; }
 .market-hero { min-height: 222px; display: grid; grid-template-columns: 1fr .65fr; overflow: hidden; position: relative; border: 1px solid var(--border); border-radius: 12px; background: linear-gradient(110deg, var(--surface) 20%, color-mix(in srgb, var(--surface) 68%, #edf3fc) 100%); }
 .app-shell--dark .market-hero { background: linear-gradient(110deg, var(--surface) 20%, #252d39 100%); }
