@@ -46,6 +46,15 @@ function doGet(e) {
           limit: params.limit
         }));
 
+      case "createSubmission":
+        return jsonOutput(createSubmission({
+          name: params.name,
+          creator: params.creator,
+          description: params.description,
+          tokens: typeof params.tokens === "string" ? JSON.parse(params.tokens) : params.tokens,
+          actor: "public"
+        }));
+
       case "approveSubmission":
         return jsonOutput(approveSubmission({
           id: params.id,
@@ -70,7 +79,7 @@ function doGet(e) {
         return jsonOutput(makeResponse(false,
             "Unknown action or missing action param. " +
             "Supported: listDesigns, getDesign, listSubmissions, " +
-            "approveSubmission, rejectSubmission, health."));
+            "createSubmission, approveSubmission, rejectSubmission, health."));
     }
   } catch (err) {
     return jsonOutput(makeResponse(false, "doGet error: " + err.message));
