@@ -97,8 +97,10 @@ function doPost(e) {
   var body = parseBody(e);
   var action = body.action || "";
 
-  // Auth gate for every write action.
-  if (!isAuthorized(e)) {
+  // createSubmission is public — no auth required. Submissions are gated
+  // by the moderation queue, not by auth. The tokens payload is too large
+  // for a URL query string, so this action must accept a POST body.
+  if (action !== "createSubmission" && !isAuthorized(e)) {
     return jsonOutput(makeResponse(false, "Unauthorized: invalid or missing token."));
   }
 
