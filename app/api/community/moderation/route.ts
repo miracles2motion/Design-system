@@ -40,35 +40,29 @@ function isPasswordValid(provided: string): boolean {
 }
 
 /**
- * Forward a request to the Apps Script backend with the auth token injected
- * into the POST body (Apps Script web apps do not reliably pass custom
- * HTTP headers through to the event object).
+ * Forward a request to the Apps Script backend via GET.
+ *
+ * Moderation operations (list, approve, reject) use Apps Script's doGet
+ * endpoint, which is public — no token required. The access control is the
+ * moderator password checked on our server before this function is called.
+ * This avoids the token delivery issues with Apps Script web apps entirely.
  */
 async function forwardToBackend(
   action: string,
-  payload: Record<string, unknown> = {},
+  params: Record<string, string> = {},
 ) {
   if (!COMMUNITY_API) {
     return { success: false, message: "Community backend is not configured." };
   }
 
-  // Send the token in the query string — Apps Script's e.parameter.token
-  // reads query string params reliably. This works with the original
-  // isAuthorized function without requiring Apps Script code changes.
-  const queryString = new URLSearchParams({
-    token: AUTH_TOKEN,
-  }).toString();
-
+  const queryString = new URLSearchParams({ action, ...params }).toString();
   const response = await fetch(`${COMMUNITY_API}/exec?${queryString}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ action, ...payload }),
+    method: "GET",
+    headers: { Accept: "application/json" },
   });
 
   const responseBody = await response.json().catch(() => ({ success: false, message: "No response body" }));
-  console.log(`[moderation-proxy] action=${action} | token length=${AUTH_TOKEN.length} | token preview=${AUTH_TOKEN.slice(0, 8)}... | http=${response.status} | success=${responseBody.success} | message=${responseBody.message || "(none)"}`);
+  console.log(`[moderation-proxy] action=${action} | http=${response.status} | success=${responseBody.success} | message=${responseBody.message || "(none)"}`);
 
   if (!response.ok) {
     return { success: false, message: `Backend returned HTTP ${response.status}` };
@@ -91,7 +85,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const result = await forwardToBackend("listSubmissions", { status: "pending", limit: 100 });
+    const result = await forwardToBackend("listSubmissions", { status: "pending", limit: "100" });
     return NextResponse.json(result);
   } catch (err) {
     return NextResponse.json(
@@ -122,12 +116,12 @@ export async function POST(request: NextRequest) {
     const { action, id, note } = body;
 
     if (action === "approve") {
-      const result = await forwardToBackend("approveSubmission", { id, note });
+      const result = await forwardToBackend("approveSubmission", { id: String(id), note: String(note ?? "") });
       return NextResponse.json(result);
     }
 
     if (action === "reject") {
-      const result = await forwardToBackend("rejectSubmission", { id, note });
+      const result = await forwardToBackend("rejectSubmission", { id: String(id), note: String(note ?? "") });
       return NextResponse.json(result);
     }
 

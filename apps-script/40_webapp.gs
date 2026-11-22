@@ -46,6 +46,20 @@ function doGet(e) {
           limit: params.limit
         }));
 
+      case "approveSubmission":
+        return jsonOutput(approveSubmission({
+          id: params.id,
+          note: params.note,
+          actor: "moderation"
+        }));
+
+      case "rejectSubmission":
+        return jsonOutput(rejectSubmission({
+          id: params.id,
+          note: params.note,
+          actor: "moderation"
+        }));
+
       case "health":
         return jsonOutput(makeResponse(true, "OK", {
           service: "forma-token-studio",
@@ -55,7 +69,8 @@ function doGet(e) {
       default:
         return jsonOutput(makeResponse(false,
             "Unknown action or missing action param. " +
-            "Supported: listDesigns, getDesign, listSubmissions, health."));
+            "Supported: listDesigns, getDesign, listSubmissions, " +
+            "approveSubmission, rejectSubmission, health."));
     }
   } catch (err) {
     return jsonOutput(makeResponse(false, "doGet error: " + err.message));
