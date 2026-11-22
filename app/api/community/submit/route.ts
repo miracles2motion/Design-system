@@ -11,8 +11,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
-/** The Apps Script web-app deployment URL (server-side only). */
-const COMMUNITY_API = process.env.FORMA_COMMUNITY_API?.replace(/\/$/, "") ?? "";
+/** The Apps Script web-app deployment URL (server-side). */
+const COMMUNITY_API =
+  (process.env.FORMA_COMMUNITY_API ?? process.env.NEXT_PUBLIC_FORMA_COMMUNITY_API)?.replace(/\/$/, "") ?? "";
 
 /** The auth token for write operations (server-side only, never exposed). */
 const AUTH_TOKEN = process.env.FORMA_COMMUNITY_TOKEN ?? "";
