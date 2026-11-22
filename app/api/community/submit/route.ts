@@ -3,9 +3,10 @@
  * =============================================================================
  * Proxy for public community design submissions.
  *
- * Submissions go through the Apps Script public doGet endpoint. There is
- * no auth token required — submissions land in the moderation queue and
- * only appear in the marketplace after a moderator approves them.
+ * Submissions go through Apps Script's doPost endpoint. createSubmission is
+ * a public action — no auth token required — because submissions are gated
+ * by the moderation queue, not by auth. The tokens payload is sent in the
+ * POST body (not the URL) to avoid Apps Script's URL length limit.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -33,23 +34,24 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
 
-    // tokens can be an object or array — stringify for query string transport.
-    const tokensStr = typeof body.tokens === "string" ? body.tokens : JSON.stringify(body.tokens ?? []);
-
-    const queryString = new URLSearchParams({
-      action: "createSubmission",
-      name: String(body.name ?? ""),
-      creator: String(body.creator ?? ""),
-      description: String(body.description ?? ""),
-      tokens: tokensStr,
-    }).toString();
-
-    const response = await fetch(`${COMMUNITY_API}/exec?${queryString}`, {
-      method: "GET",
-      headers: { Accept: "application/json" },
+    const response = await fetch(`${COMMUNITY_API}/exec`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        action: "createSubmission",
+        name: body.name,
+        creator: body.creator,
+        description: body.description,
+        tokens: body.tokens ?? {},
+      }),
     });
 
     if (!response.ok) {
+      const errorBody = await response.text().catch(() => "");
+      console.log(`[submit-proxy] action=createSubmission | http=${response.status} | errorBody=${errorBody.slice(0, 200)}`);
       return NextResponse.json(
         { success: false, message: `Backend returned HTTP ${response.status}` },
         { status: response.status },
